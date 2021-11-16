@@ -4,7 +4,10 @@ use std::fs::OpenOptions;
 use std::os::unix::fs::OpenOptionsExt;
 use std::thread;
 
+use evdev_rs::TimeVal;
+use evdev_rs::UninitDevice;
 use evdev_rs::enums::EV_SYN;
+use libc::time_t;
 use structopt::StructOpt;
 
 use log::{LevelFilter, debug, info};
@@ -40,6 +43,85 @@ fn pb_new(mp: &mut MultiProgress, name: &str) -> ProgressBar {
     pb
 }
 
+#[derive(Copy, Clone, PartialEq)]
+pub enum Axis {
+    X,
+    Y,
+    Z,
+    RX,
+    RY,
+    RZ,
+}
+
+#[derive(Copy, Clone, PartialEq)]
+pub enum Map {
+    None,
+    X,
+    Y,
+    H,
+    V,
+}
+
+impl Map {
+    pub fn event(&self, v: &UInputDevice, ts: TimeVal, val: i32) -> anyhow::Result<()> {
+        // Write events based on map type
+        match self {
+            Map::None => {
+                return Ok(())
+            },
+            Map::X => {
+                v.write_event(&InputEvent{
+                    time: ts,
+                    event_code: EventCode::EV_REL(EV_REL::REL_X),
+                    value: val,
+                })?;
+            },
+            Map::Y => {
+                v.write_event(&InputEvent{
+                    time: ts,
+                    event_code: EventCode::EV_REL(EV_REL::REL_Y),
+                    value: val,
+                })?;
+            },
+            Map::H => {
+                v.write_event(&InputEvent{
+                    time: ts,
+                    event_code: EventCode::EV_REL(EV_REL::REL_HWHEEL),
+                    value: val / 120,
+                })?;
+
+                v.write_event(&InputEvent{
+                    time: ts,
+                    event_code: EventCode::EV_REL(EV_REL::REL_HWHEEL_HI_RES),
+                    value: val,
+                })?;
+            },
+            Map::V => {
+                v.write_event(&InputEvent{
+                    time: ts,
+                    event_code: EventCode::EV_REL(EV_REL::REL_WHEEL),
+                    value: -val / 120,
+                })?;
+
+                v.write_event(&InputEvent{
+                    time: ts,
+                    event_code: EventCode::EV_REL(EV_REL::REL_WHEEL_HI_RES),
+                    value: -val,
+                })?;
+            },
+        }
+
+        // Write sync event to commit
+        v.write_event(&InputEvent{
+            time: ts,
+            event_code: EventCode::EV_SYN(EV_SYN::SYN_REPORT),
+            value: 0,
+        })?;
+
+        Ok(())
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     // Parse command line arguments
     let opts = Options::from_args();
@@ -55,46 +137,44 @@ fn main() -> anyhow::Result<()> {
     let f = File::open(opts.device)?;
     let d = Device::new_from_file(f)?;
 
+    if let Some(n) = d.name() {
+        info!("Connected to device: '{}' ({:04x}:{:04x})", 
+            n, d.vendor_id(), d.product_id());
+    }
+
     info!("Creating virtual device");
 
     //v.set_name("Virtual SpaceMouse");
     //v.set_bustype(BusType::BUS_VIRTUAL as u16);
 
-    let v = UInputDevice::create_from_device(&d)?;
-    info!("new virtual device: {}", v.devnode().unwrap());
+    let u = UninitDevice::new().unwrap();
 
-    info!("Setting up virtual device");
-
-    let f = File::open(v.devnode().unwrap())?;
-    let v1 = Device::new_from_file(f)?;
-
-    v1.set_name("Virtual SpaceMouse");
-    v1.set_bustype(BusType::BUS_USB as u16);
-    v1.set_vendor_id(0xabcd);
-    v1.set_product_id(0xefef);
-
+    u.set_name("Virtual SpaceMouse");
+    u.set_bustype(BusType::BUS_USB as u16);
+    u.set_vendor_id(0xabcd);
+    u.set_product_id(0xefef);
 
     // https://stackoverflow.com/a/64559658/6074942
-    v1.enable_event_type(&EventType::EV_KEY)?;
-    v1.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_LEFT), None)?;
-    v1.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_RIGHT), None)?;
+    u.enable_event_type(&EventType::EV_KEY)?;
+    u.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_LEFT), None)?;
+    u.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_RIGHT), None)?;
 
-    v1.enable_event_type(&EventType::EV_REL)?;
-    v1.enable_event_code(&EventCode::EV_REL(EV_REL::REL_X), None)?;
-    v1.enable_event_code(&EventCode::EV_REL(EV_REL::REL_Y), None)?;
+    u.enable_event_type(&EventType::EV_REL)?;
+    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_X), None)?;
+    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_Y), None)?;
+    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_WHEEL), None)?;
+    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_HWHEEL), None)?;
+    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_WHEEL_HI_RES), None)?;
+    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_HWHEEL_HI_RES), None)?;
 
-    v1.enable_event_code(&EventCode::EV_SYN(EV_SYN::SYN_REPORT), None)?;
-
+    u.enable_event_code(&EventCode::EV_SYN(EV_SYN::SYN_REPORT), None)?;
 
     // Attach virtual device to uinput file
     //let v = v.set_file(f)?;
 
-    info!("heyy!");
+    let v = UInputDevice::create_from_device(&u)?;
+    info!("Created virtual device: {}", v.devnode().unwrap());
 
-    if let Some(n) = d.name() {
-        info!("Connected to device: '{}' ({:04x}:{:04x})", 
-            n, d.vendor_id(), d.product_id());
-    }
 
     let mut mp = MultiProgress::with_draw_target(ProgressDrawTarget::stdout_with_hz(30));
 
@@ -116,28 +196,24 @@ fn main() -> anyhow::Result<()> {
         debug!("Event ({}.{:03}) {:?}: {:?}", event.time.tv_sec, event.time.tv_usec, event.event_code, event.value);
 
         let pb = match event.event_code {
-            EventCode::EV_REL(EV_REL::REL_X) => {
-                v.write_event(&InputEvent{
-                    time: event.time,
-                    event_code: EventCode::EV_REL(EV_REL::REL_X),
-                    value: event.value,
-                })?;
-
-                v.write_event(&InputEvent{
-                    time: event.time,
-                    event_code: EventCode::EV_SYN(EV_SYN::SYN_REPORT),
-                    value: 0,
-                })?;
-
-                Some(&pb_x)
-            },
-            EventCode::EV_REL(EV_REL::REL_Y) => Some(&pb_y),
-            EventCode::EV_REL(EV_REL::REL_Z) => Some(&pb_z),
+            EventCode::EV_REL(EV_REL::REL_X) =>  Some(&pb_x),
+            EventCode::EV_REL(EV_REL::REL_Y) =>  Some(&pb_y),
+            EventCode::EV_REL(EV_REL::REL_Z) =>  Some(&pb_z),
             EventCode::EV_REL(EV_REL::REL_RX) => Some(&pb_rx),
             EventCode::EV_REL(EV_REL::REL_RY) => Some(&pb_ry),
             EventCode::EV_REL(EV_REL::REL_RZ) => Some(&pb_rz),
             _ => None,
         };
+
+        let code = match event.event_code {
+            EventCode::EV_REL(EV_REL::REL_X) =>  Map::X,
+            EventCode::EV_REL(EV_REL::REL_Y) =>  Map::Y,
+            EventCode::EV_REL(EV_REL::REL_RX) => Map::V,
+            EventCode::EV_REL(EV_REL::REL_RY) => Map::H,
+            _ => Map::None,
+        };
+
+        code.event(&v, event.time, event.value / 2)?;
 
         if let Some(pb) = pb {
             pb.set_position((event.value - AXIS_MIN + 1) as u64);
