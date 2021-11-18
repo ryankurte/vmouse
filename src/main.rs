@@ -1,22 +1,21 @@
 
 use std::fs::File;
-use std::fs::OpenOptions;
-use std::os::unix::fs::OpenOptionsExt;
 use std::thread;
 
-use evdev_rs::TimeVal;
-use evdev_rs::UninitDevice;
-use evdev_rs::enums::EV_SYN;
-use libc::time_t;
+
 use structopt::StructOpt;
 
 use log::{LevelFilter, debug, info};
 use simplelog::{SimpleLogger, Config as LogConfig};
 
-use evdev_rs::{Device, DeviceWrapper, ReadFlag, InputEvent, UInputDevice};
-use evdev_rs::enums::{EventCode, EventType, BusType, EV_REL, EV_KEY};
+use evdev_rs::{Device, UninitDevice, DeviceWrapper, ReadFlag, UInputDevice};
+use evdev_rs::enums::{EventCode, BusType, EV_REL, EV_KEY, EV_SYN};
 
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+
+use spacemouse::{Map, Config};
+use spacemouse::{EVENT_TYPES, EVENT_CODES, AXIS_MAX, AXIS_MIN};
+
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]
 pub struct Options {
@@ -28,8 +27,7 @@ pub struct Options {
     pub log_level: LevelFilter,
 }
 
-pub const AXIS_MAX: i32 = 350;
-pub const AXIS_MIN: i32 = -350;
+
 
 
 fn pb_new(mp: &mut MultiProgress, name: &str) -> ProgressBar {
@@ -41,85 +39,6 @@ fn pb_new(mp: &mut MultiProgress, name: &str) -> ProgressBar {
 
     pb.set_position((1 - AXIS_MIN) as u64);
     pb
-}
-
-#[derive(Copy, Clone, PartialEq)]
-pub enum Axis {
-    X,
-    Y,
-    Z,
-    RX,
-    RY,
-    RZ,
-}
-
-#[derive(Copy, Clone, PartialEq)]
-pub enum Map {
-    None,
-    X,
-    Y,
-    H,
-    V,
-}
-
-impl Map {
-    pub fn event(&self, v: &UInputDevice, ts: TimeVal, val: i32) -> anyhow::Result<()> {
-        // Write events based on map type
-        match self {
-            Map::None => {
-                return Ok(())
-            },
-            Map::X => {
-                v.write_event(&InputEvent{
-                    time: ts,
-                    event_code: EventCode::EV_REL(EV_REL::REL_X),
-                    value: val,
-                })?;
-            },
-            Map::Y => {
-                v.write_event(&InputEvent{
-                    time: ts,
-                    event_code: EventCode::EV_REL(EV_REL::REL_Y),
-                    value: val,
-                })?;
-            },
-            Map::H => {
-                v.write_event(&InputEvent{
-                    time: ts,
-                    event_code: EventCode::EV_REL(EV_REL::REL_HWHEEL),
-                    value: val / 120,
-                })?;
-
-                v.write_event(&InputEvent{
-                    time: ts,
-                    event_code: EventCode::EV_REL(EV_REL::REL_HWHEEL_HI_RES),
-                    value: val,
-                })?;
-            },
-            Map::V => {
-                v.write_event(&InputEvent{
-                    time: ts,
-                    event_code: EventCode::EV_REL(EV_REL::REL_WHEEL),
-                    value: -val / 120,
-                })?;
-
-                v.write_event(&InputEvent{
-                    time: ts,
-                    event_code: EventCode::EV_REL(EV_REL::REL_WHEEL_HI_RES),
-                    value: -val,
-                })?;
-            },
-        }
-
-        // Write sync event to commit
-        v.write_event(&InputEvent{
-            time: ts,
-            event_code: EventCode::EV_SYN(EV_SYN::SYN_REPORT),
-            value: 0,
-        })?;
-
-        Ok(())
-    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -155,19 +74,13 @@ fn main() -> anyhow::Result<()> {
     u.set_product_id(0xefef);
 
     // https://stackoverflow.com/a/64559658/6074942
-    u.enable_event_type(&EventType::EV_KEY)?;
-    u.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_LEFT), None)?;
-    u.enable_event_code(&EventCode::EV_KEY(EV_KEY::BTN_RIGHT), None)?;
+    for t in EVENT_TYPES {
+        u.enable_event_type(&t)?;
+    }
 
-    u.enable_event_type(&EventType::EV_REL)?;
-    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_X), None)?;
-    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_Y), None)?;
-    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_WHEEL), None)?;
-    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_HWHEEL), None)?;
-    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_WHEEL_HI_RES), None)?;
-    u.enable_event_code(&EventCode::EV_REL(EV_REL::REL_HWHEEL_HI_RES), None)?;
-
-    u.enable_event_code(&EventCode::EV_SYN(EV_SYN::SYN_REPORT), None)?;
+    for c in EVENT_CODES {
+        u.enable_event_code(&c, None)?;
+    }
 
     // Attach virtual device to uinput file
     //let v = v.set_file(f)?;
@@ -175,6 +88,7 @@ fn main() -> anyhow::Result<()> {
     let v = UInputDevice::create_from_device(&u)?;
     info!("Created virtual device: {}", v.devnode().unwrap());
 
+    let cfg = Config::default();
 
     let mut mp = MultiProgress::with_draw_target(ProgressDrawTarget::stdout_with_hz(30));
 
@@ -205,20 +119,13 @@ fn main() -> anyhow::Result<()> {
             _ => None,
         };
 
-        let code = match event.event_code {
-            EventCode::EV_REL(EV_REL::REL_X) =>  Map::X,
-            EventCode::EV_REL(EV_REL::REL_Y) =>  Map::Y,
-            EventCode::EV_REL(EV_REL::REL_RX) => Map::V,
-            EventCode::EV_REL(EV_REL::REL_RY) => Map::H,
-            _ => Map::None,
-        };
-
-        code.event(&v, event.time, event.value / 2)?;
-
         if let Some(pb) = pb {
             pb.set_position((event.value - AXIS_MIN + 1) as u64);
             pb.set_message(format!("{:4}", event.value));
         }
+
+        let (map, val) = cfg.map(&event);
+        map.event(&v, event.time, val)?;
     }
 
     Ok(())
