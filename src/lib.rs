@@ -49,40 +49,43 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self { 
-            x: Axis{map: Map::H, scale: 0.5}, 
-            y: Axis{map: Map::V, scale: 0.5}, 
+            x: Axis{map: Map::H, scale: 0.5, curve: Some(0.5)}, 
+            y: Axis{map: Map::V, scale: 0.5, curve: Some(0.5)}, 
             z: Default::default(), 
-            rx: Axis{map: Map::Y, scale: 0.2},
-            ry: Axis{map: Map::X, scale: -0.2}, 
+            rx: Axis{map: Map::Y, scale: 0.2, curve: Some(1.0)},
+            ry: Axis{map: Map::X, scale: -0.2, curve: Some(1.0)}, 
             rz: Default::default(),
         }
     }
 }
 
 impl Config {
-    pub fn map(&self, e: &InputEvent) -> (Map, f32) {
+    pub fn map(&self, e: &InputEvent) -> Option<(Map, f32)> {
         // Match event codes to configuration
         let m = match e.event_code {
-            EventCode::EV_REL(EV_REL::REL_X) =>  Some(self.x),
-            EventCode::EV_REL(EV_REL::REL_Y) =>  Some(self.y),
-            EventCode::EV_REL(EV_REL::REL_Z) =>  Some(self.z),
-            EventCode::EV_REL(EV_REL::REL_RX) => Some(self.rx),
-            EventCode::EV_REL(EV_REL::REL_RY) => Some(self.ry),
-            EventCode::EV_REL(EV_REL::REL_RZ) => Some(self.rz),
-            _ => None,
+            EventCode::EV_REL(EV_REL::REL_X) =>  self.x,
+            EventCode::EV_REL(EV_REL::REL_Y) =>  self.y,
+            EventCode::EV_REL(EV_REL::REL_Z) =>  self.z,
+            EventCode::EV_REL(EV_REL::REL_RX) => self.rx,
+            EventCode::EV_REL(EV_REL::REL_RY) => self.ry,
+            EventCode::EV_REL(EV_REL::REL_RZ) => self.rz,
+            _ => return None,
         };
 
         // Normalise input value (AXIS_MIN -> AXIS_MAX to -1.0 -> 1.0)
         let mut v = e.value as f32 / AXIS_MAX as f32;
 
-        // Apply scaling if available
-        match m {
-            Some(m) => {
-                v *= m.scale;
-                (m.map, v)
-            },
-            None => (Map::None, v),
+        // Apply curve / scalar equation if available
+        // https://www.chiefdelphi.com/t/paper-joystick-sensitivity-gain-adjustment/107280
+        if let Some(c) = m.curve {
+            v = c * v.powi(3) + (1.0 - c) * v;
         }
+
+        // Apply scaling if available
+        v *= m.scale;
+                
+        // Return map and new value
+        Some((m.map, v))
     }
 }
 
@@ -93,6 +96,10 @@ impl Config {
 pub struct Axis {
     /// Output axis mapping
     pub map: Map,
+
+    /// Output axis sensitivity curve (0.0=x 1.0=x^3)
+    pub curve: Option<f32>,
+
     /// Output axis scaling factor
     pub scale: f32,
 }
@@ -102,6 +109,7 @@ impl Default for Axis {
         Axis {
             scale: 0.5,
             map: Map::None,
+            curve: None,
         }
     }
 }

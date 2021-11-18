@@ -124,8 +124,9 @@ fn main() -> anyhow::Result<()> {
             pb.set_message(format!("{:4}", event.value));
         }
 
-        let (map, val) = cfg.map(&event);
-        map.event(&v, event.time, val)?;
+        if let Some((map, val)) = cfg.map(&event) {
+            map.event(&v, event.time, val)?;
+        }
     }
 
     Ok(())
