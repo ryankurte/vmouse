@@ -14,3 +14,19 @@ libc = "0.2.107"
 serde = "1.0.130"
 toml = "0.5.8"
 
+iced_native = "0.4.0"
+iced_glow = "0.2.0"
+
+[dependencies.iced]
+git = "https://github.com/iced-rs/iced"
+version = "0.3"
+default_features = false
+features = [ "glow", "glow_canvas", "glow_default_system_font" ]
+
+[[bin]]
+name = "vmouseui"
+path = "src/util.rs"
+
+[patch.crates-io]
+iced_native = { git = "https://github.com/iced-rs/iced" }
+iced_glow = { git = "https://github.com/iced-rs/iced" }
