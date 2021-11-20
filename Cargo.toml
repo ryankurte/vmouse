@@ -1,5 +1,5 @@
 [package]
-name = "spacemouse"
+name = "vmouse"
 version = "0.1.0"
 edition = "2021"
 
@@ -13,4 +13,20 @@ indicatif = "0.16.2"
 libc = "0.2.107"
 serde = "1.0.130"
 toml = "0.5.8"
+ctrlc = "3.2.1"
+bincode = "1.3.3"
+async-std = { version = "1.10.0", features = ["attributes"] }
+futures = "0.3.17"
+async-ctrlc = "1.2.0"
 
+[[bin]]
+name = "vmoused"
+path = "src/daemon.rs"
+
+[[bin]]
+name = "vmousectl"
+path = "src/ctl.rs"
+
+[[bin]]
+name = "vmouse"
+path = "src/main.rs"

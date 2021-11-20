@@ -1,0 +1,2 @@
+ACTION=="add", KERNEL=="event[0-9]*", SUBSYSTEM=="input", ATTRS{idVendor}=="256f", RUN+="/usr/local/bin/vmousectl %k '$attr{idVendor}' '$attr{idProduct}'"
+

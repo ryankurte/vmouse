@@ -13,8 +13,8 @@ use evdev_rs::enums::{EventCode, BusType, EV_REL, EV_KEY, EV_SYN};
 
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
-use spacemouse::{Map, Config};
-use spacemouse::{EVENT_TYPES, EVENT_CODES, AXIS_MAX, AXIS_MIN};
+use vmouse::{Map, Config};
+use vmouse::{EVENT_TYPES, EVENT_CODES, AXIS_MAX, AXIS_MIN};
 
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]

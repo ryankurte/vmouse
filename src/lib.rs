@@ -1,4 +1,6 @@
 
+use structopt::StructOpt;
+use serde::{Serialize, Deserialize};
 
 use evdev_rs::{TimeVal, InputEvent, UInputDevice};
 use evdev_rs::enums::{EventCode, EventType, BusType, EV_REL, EV_KEY, EV_SYN};
@@ -27,6 +29,22 @@ pub const EVENT_CODES: &[EventCode] = &[
 
 pub const AXIS_MAX: i32 = 350;
 pub const AXIS_MIN: i32 = -350;
+
+
+
+#[derive(Clone, PartialEq, Debug, StructOpt)]
+#[derive(serde::Serialize, serde::Deserialize)]
+
+pub enum Command {
+    Ping,
+    Bind{
+        event: String,
+        vid: String,
+        pid: String,
+    },
+    Ok,
+}
+
 
 /// Mouse re-mapping configuration
 #[derive(Copy, Clone, PartialEq)]
