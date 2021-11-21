@@ -41,7 +41,8 @@ fn pb_new(mp: &mut MultiProgress, name: &str) -> ProgressBar {
     pb
 }
 
-fn main() -> anyhow::Result<()> {
+#[async_std::main]
+async fn main() -> anyhow::Result<()> {
     // Parse command line arguments
     let opts = Options::from_args();
 
@@ -103,9 +104,16 @@ fn main() -> anyhow::Result<()> {
     // Thread to join on progress bars otherwise these do not execute
     thread::spawn(move || mp.join() );
 
+    // Wrap device in async adapter
+    let a = smol::Async::new(d)?;
+
     loop {
+        // Await input event
+
         // Read next input event
-        let (_status, event) = d.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING)?;
+        let (_status, event) = a.read_with(|d| {
+            d.next_event(ReadFlag::NORMAL)
+        }).await?;
 
         debug!("Event ({}.{:03}) {:?}: {:?}", event.time.tv_sec, event.time.tv_usec, event.event_code, event.value);
 

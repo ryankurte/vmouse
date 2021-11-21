@@ -9,8 +9,10 @@ use std::io::{Read, ErrorKind};
 use std::time::Duration;
 
 use async_std::task::JoinHandle;
-use evdev_rs::{Device, DeviceWrapper};
+use evdev_rs::{Device, DeviceWrapper, ReadFlag};
 use futures::{FutureExt, stream::StreamExt as _};
+
+
 use async_std::channel::Sender;
 use async_std::{io::ReadExt, io::WriteExt};
 use async_std::os::unix::net::{UnixListener, UnixStream};
@@ -144,6 +146,38 @@ impl Daemon {
         self.tasks.push(TaskHandle{h, tx});
 
         Ok(())
+    }
+
+    async fn attach_device(&mut self, device: &str) -> anyhow::Result<()> {
+
+        // Connect to device
+        let f = File::open(device)?;
+        let d = Device::new_from_file(f)?;
+
+        // Log device info
+        if let Some(n) = d.name() {
+            info!("Connected to device: '{}' ({:04x}:{:04x})", 
+                n, d.vendor_id(), d.product_id());
+        }
+
+        // Wrap device in async adapter
+        let a = smol::Async::new(d)?;
+
+        // Setup event listening task
+        let h = async_std::task::spawn(async move {
+            loop {
+
+                futures::select!(
+                    r = a.read_with(|d| d.next_event(ReadFlag::NORMAL)).fuse() => {
+
+                    }
+                )
+            }
+
+            //Ok(())
+        });
+
+        todo!()
     }
 
     fn handle_cmd(&mut self, cmd: Command) -> anyhow::Result<Option<Command>> {
