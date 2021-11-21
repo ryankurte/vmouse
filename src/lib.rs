@@ -2,7 +2,9 @@
 use structopt::StructOpt;
 use serde::{Serialize, Deserialize};
 
-use evdev_rs::{TimeVal, InputEvent, UInputDevice};
+use log::debug;
+
+use evdev_rs::{TimeVal, InputEvent, UInputDevice, UninitDevice, DeviceWrapper};
 use evdev_rs::enums::{EventCode, EventType, BusType, EV_REL, EV_KEY, EV_SYN};
 
 
@@ -38,11 +40,11 @@ pub const AXIS_MIN: i32 = -350;
 pub enum Command {
     Ping,
     Bind{
+        /// Device event name
         event: String,
-        vid: String,
-        pid: String,
     },
     Ok,
+    Failed,
 }
 
 
@@ -211,4 +213,30 @@ impl Map {
 
         Ok(())
     }
+}
+
+pub fn virtual_device() -> Result<UInputDevice, anyhow::Error> {
+    let u = UninitDevice::new().unwrap();
+
+    u.set_name("Virtual SpaceMouse");
+    u.set_bustype(BusType::BUS_USB as u16);
+    u.set_vendor_id(0xabcd);
+    u.set_product_id(0xefef);
+
+    // https://stackoverflow.com/a/64559658/6074942
+    for t in EVENT_TYPES {
+        u.enable_event_type(&t)?;
+    }
+
+    for c in EVENT_CODES {
+        u.enable_event_code(&c, None)?;
+    }
+
+    // Attach virtual device to uinput file
+    //let v = v.set_file(f)?;
+
+    let v = UInputDevice::create_from_device(&u)?;
+    debug!("Created virtual device: {}", v.devnode().unwrap());
+
+    Ok(v)
 }

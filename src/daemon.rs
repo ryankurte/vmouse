@@ -9,7 +9,7 @@ use std::io::{Read, ErrorKind};
 use std::time::Duration;
 
 use async_std::task::JoinHandle;
-use evdev_rs::{Device, DeviceWrapper, ReadFlag};
+use evdev_rs::{Device, DeviceWrapper, UInputDevice, InputEvent, ReadFlag};
 use futures::{FutureExt, stream::StreamExt as _};
 
 
@@ -19,9 +19,10 @@ use async_std::os::unix::net::{UnixListener, UnixStream};
 
 use structopt::StructOpt;
 
-use log::{LevelFilter, debug, info};
+use log::{LevelFilter, trace, debug, info, error};
 use simplelog::{SimpleLogger, Config as LogConfig};
-use vmouse::Command;
+
+use vmouse::{Command, Config};
 
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]
@@ -48,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut exit = async_ctrlc::CtrlC::new()?.fuse();
     let (ctl_tx, mut ctl_rx) = async_std::channel::unbounded();
+    let (evt_tx, mut evt_rx) = async_std::channel::unbounded();
 
     debug!("Connecting to socket: {}", opts.socket);
 
@@ -55,9 +57,12 @@ async fn main() -> anyhow::Result<()> {
     let listener = UnixListener::bind(opts.socket).await?;
     let mut incoming = listener.incoming().fuse();
 
-    let mut d = Daemon::new();
+    let config = Config::default();
 
-    // TODO: setup virtual device
+    let mut d = Daemon::new(config, evt_tx);
+
+    // Setup virtual device
+    let v = vmouse::virtual_device()?;
 
     // TODO: scan for existing devices?
 
@@ -77,8 +82,20 @@ async fn main() -> anyhow::Result<()> {
             ctl = ctl_rx.next() => {
                 if let Some(CommandHandle{c, tx}) = ctl {
                     debug!("Received command: {:?}", c);
-                    if let Some(r) = d.handle_cmd(c)? {
+                    if let Some(r) = d.handle_cmd(c).await? {
                         tx.send(r).await?;
+                    }
+                }
+            },
+            // Handle input events
+            evt = evt_rx.next() => {
+                if let Some(evt) = evt {
+                    trace!("Input event: {:?}", evt);
+
+                    // Map input to output event
+                    // TODO: multi-device and reconfigurable mappings
+                    if let Some((map, val)) = d.config.map(&evt) {
+                        map.event(&v, evt.time, val)?;
                     }
                 }
             }
@@ -94,13 +111,15 @@ async fn main() -> anyhow::Result<()> {
 }
 
 pub struct Daemon {
-    tasks: Vec<TaskHandle>,
+    config: Config,
+    evt_tx: Sender<InputEvent>,
 }
 
 impl Daemon {
-    fn new() -> Self {
+    fn new(config: Config, evt_tx: Sender<InputEvent>) -> Self {
         Self{
-            tasks: vec![],
+            config,
+            evt_tx,
         }
     }
 
@@ -110,9 +129,11 @@ impl Daemon {
         let tx = resp_tx.clone();
         let mut buff = [0u8; 1024];
 
-        let h = async_std::task::spawn(async move {
+        // Spawn a task for each UnixStream
+        let _h: JoinHandle<Result<(), anyhow::Error>> = async_std::task::spawn(async move {
             loop {
                 futures::select!(
+                    // Handle input commands
                     r = stream.read(&mut buff).fuse() => {
                         let r = match r {
                             Ok(n) => &buff[..n],
@@ -126,6 +147,7 @@ impl Daemon {
                 
                         ctl_tx.send(CommandHandle{c, tx: resp_tx.clone()}).await?;
                     },
+                    // Forward responses
                     c = resp_rx.next() => {
                         if let Some(c) = c {
                             let enc: Vec<u8> = bincode::serialize(&c)?;
@@ -137,22 +159,23 @@ impl Daemon {
                             break;
                         }
                     },
+                    // TODO: handle exit events
                 )
             }
 
             Ok(())
         });
 
-        self.tasks.push(TaskHandle{h, tx});
-
         Ok(())
     }
 
-    async fn attach_device(&mut self, device: &str) -> anyhow::Result<()> {
+    async fn attach_device(&mut self, device: String) -> anyhow::Result<()> {
 
         // Connect to device
-        let f = File::open(device)?;
+        let f = File::open(&device)?;
         let d = Device::new_from_file(f)?;
+
+        let evt_tx = self.evt_tx.clone();
 
         // Log device info
         if let Some(n) = d.name() {
@@ -164,25 +187,44 @@ impl Daemon {
         let a = smol::Async::new(d)?;
 
         // Setup event listening task
-        let h = async_std::task::spawn(async move {
-            loop {
-
+        let h: JoinHandle<Result<(), anyhow::Error>> = async_std::task::spawn(async move {
+            let r = loop {
                 futures::select!(
+                    // Read on incoming events
                     r = a.read_with(|d| d.next_event(ReadFlag::NORMAL)).fuse() => {
-
-                    }
+                        match r {
+                            Ok((_status, evt)) => evt_tx.send(evt).await?,
+                            Err(e) => break Err(e.into()),
+                        }
+                    },
+                    // TODO: exit handler
                 )
-            }
+            };
 
-            //Ok(())
+            debug!("Disconnected from device: {}", device);
+
+            r
         });
 
-        todo!()
+        Ok(())
     }
 
-    fn handle_cmd(&mut self, cmd: Command) -> anyhow::Result<Option<Command>> {
+    async fn handle_cmd(&mut self, cmd: Command) -> anyhow::Result<Option<Command>> {
         let resp = match cmd {
             Command::Ping => Some(Command::Ok),
+            Command::Bind { event } => {
+                info!("Binding device: {}", event);
+                match self.attach_device(event.clone()).await {
+                    Ok(_) => {
+                        info!("Device {} attach OK!", event);
+                        Some(Command::Ok)
+                    },
+                    Err(e) => {
+                        error!("Device {} attach failed: {:?}", event, e);
+                        Some(Command::Failed)
+                    }
+                }
+            },
             _ => None,
         };
 
@@ -190,19 +232,8 @@ impl Daemon {
     }
 }
 
-fn bind_device(device: &str) -> anyhow::Result<()> {
-    // Open device file
-    let f = File::open(device)?;
-    let d = Device::new_from_file(f)?;
-
-    if let Some(n) = d.name() {
-        info!("Connected to device: '{}' ({:04x}:{:04x})", 
-            n, d.vendor_id(), d.product_id());
-    }
-
-
-
-    Ok(())
+struct DeviceHandle {
+    h: JoinHandle<Result<(), anyhow::Error>>,
 }
 
 struct TaskHandle {

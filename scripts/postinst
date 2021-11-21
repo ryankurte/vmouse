@@ -1,0 +1,4 @@
+#!/bin/bash
+
+# Reload udev rules to add 99-vmouse.rules
+udevadm control --reload-rules

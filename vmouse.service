@@ -1,0 +1,11 @@
+[Unit]
+Description=VMouse virtual mouse daemon
+
+[Service]
+Group=input
+ExecStart=/usr/local/bin/vmoused
+
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

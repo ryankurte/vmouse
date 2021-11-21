@@ -1,7 +1,26 @@
 [package]
 name = "vmouse"
+description = "Virtual mouse daemon and CLI for linux"
+repository = "https://github.com/ryankurte/vmouse"
+authors = [ "ryan kurte <ryan@kurte.nz>" ]
+license = "GPL-3.0"
 version = "0.1.0"
 edition = "2021"
+
+[package.metadata.deb]
+priority = "optional"
+depends = "libevdev2"
+assets = [
+    ["target/release/vmoused",   "/usr/local/bin/vmoused",   "0755"],
+    ["target/release/vmousectl", "/usr/local/bin/vmousectl", "0755"],
+    ["vmouse.toml",     "/etc/vmouse/vmouse.toml",           "0644"],
+    ["99-vmouse.rules", "/etc/udev/99-vmouse.rules",         "0644"],
+    ["vmouse.service", "/lib/systemd/system/vmouse.service", "0644"],
+]
+conf-files = [
+  "/etc/vmouse/vmouse.toml",
+]
+maintainer-scripts = "scripts/"
 
 [dependencies]
 log = "0.4.14"
@@ -29,10 +48,6 @@ path = "src/daemon.rs"
 name = "vmousectl"
 path = "src/ctl.rs"
 
-[[bin]]
-name = "vmouse"
-path = "src/main.rs"
-
 [patch.crates-io]
-evdev-rs = { path = "../forks/evdev-rs" }
+evdev-rs = { git = "https://github.com/ryankurte/evdev-rs.git", branch = "device-as-raw-fd" }
 
