@@ -40,6 +40,8 @@ async-ctrlc = "1.2.0"
 crossbeam = "0.8.1"
 smol = { version = "1.2.5", optional = false }
 iced_native="*"
+strum_macros = "0.23.0"
+strum = "0.23.0"
 
 [[bin]]
 name = "vmoused"
@@ -54,7 +56,7 @@ git = "https://github.com/iced-rs/iced"
 branch = "master"
 #version = "0.3"
 default_features = false
-features = [ "glow", "glow_canvas", "glow_default_system_font" ]
+features = [ "glow", "glow_canvas", "glow_default_system_font", "async-std" ]
 
 [[bin]]
 name = "vmouseui"
