@@ -69,8 +69,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self { 
-            x: Axis{map: Map::H, scale: 0.5, curve: Some(0.5)}, 
-            y: Axis{map: Map::V, scale: 0.5, curve: Some(0.5)}, 
+            x: Axis{map: Map::H, scale: 0.005, curve: Some(0.5)}, 
+            y: Axis{map: Map::V, scale: 0.005, curve: Some(0.5)}, 
             z: Default::default(), 
             rx: Axis{map: Map::Y, scale: 0.2, curve: Some(1.0)},
             ry: Axis{map: Map::X, scale: -0.2, curve: Some(1.0)}, 
@@ -155,7 +155,7 @@ impl Map {
     pub fn event(&self, v: &UInputDevice, ts: TimeVal, val: f32) -> anyhow::Result<()> {
 
         // De-normalise value
-        let val = (val * AXIS_MAX as f32) as i32;
+        let val_i32 = (val * AXIS_MAX as f32) as i32;
 
         // Write events based on map type
         match self {
@@ -166,40 +166,40 @@ impl Map {
                 v.write_event(&InputEvent{
                     time: ts,
                     event_code: EventCode::EV_REL(EV_REL::REL_X),
-                    value: val,
+                    value: val_i32,
                 })?;
             },
             Map::Y => {
                 v.write_event(&InputEvent{
                     time: ts,
                     event_code: EventCode::EV_REL(EV_REL::REL_Y),
-                    value: val,
+                    value: val_i32,
                 })?;
             },
             Map::H => {
                 v.write_event(&InputEvent{
                     time: ts,
                     event_code: EventCode::EV_REL(EV_REL::REL_HWHEEL),
-                    value: val / 120,
+                    value: val_i32,
                 })?;
 
                 v.write_event(&InputEvent{
                     time: ts,
                     event_code: EventCode::EV_REL(EV_REL::REL_HWHEEL_HI_RES),
-                    value: val,
+                    value: (val * AXIS_MAX as f32 * 120.00) as i32,
                 })?;
             },
             Map::V => {
                 v.write_event(&InputEvent{
                     time: ts,
                     event_code: EventCode::EV_REL(EV_REL::REL_WHEEL),
-                    value: -val / 120,
+                    value: -val_i32,
                 })?;
 
                 v.write_event(&InputEvent{
                     time: ts,
                     event_code: EventCode::EV_REL(EV_REL::REL_WHEEL_HI_RES),
-                    value: -val,
+                    value: -(val * AXIS_MAX as f32 * 120.0) as i32,
                 })?;
             },
         }

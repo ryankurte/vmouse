@@ -39,6 +39,7 @@ futures = "0.3.17"
 async-ctrlc = "1.2.0"
 crossbeam = "0.8.1"
 smol = { version = "1.2.5", optional = false }
+iced_native="*"
 
 [[bin]]
 name = "vmoused"
@@ -48,6 +49,18 @@ path = "src/daemon.rs"
 name = "vmousectl"
 path = "src/ctl.rs"
 
-[patch.crates-io]
-evdev-rs = { git = "https://github.com/ryankurte/evdev-rs.git", branch = "device-as-raw-fd" }
+[dependencies.iced]
+git = "https://github.com/iced-rs/iced"
+branch = "master"
+#version = "0.3"
+default_features = false
+features = [ "glow", "glow_canvas", "glow_default_system_font" ]
 
+[[bin]]
+name = "vmouseui"
+path = "src/util.rs"
+
+[patch.crates-io]
+iced_native = { git = "https://github.com/iced-rs/iced", branch="master" }
+iced_glow = { git = "https://github.com/iced-rs/iced", branch="master" }
+evdev-rs = { git = "https://github.com/ryankurte/evdev-rs.git", branch = "device-as-raw-fd" }
