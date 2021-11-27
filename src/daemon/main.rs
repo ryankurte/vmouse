@@ -22,7 +22,7 @@ use structopt::StructOpt;
 use log::{LevelFilter, trace, debug, info, error};
 use simplelog::{SimpleLogger, Config as LogConfig};
 
-use vmouse::{Command, Config};
+use vmouse::{Command, Config, AxisValue};
 
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]
@@ -80,10 +80,10 @@ async fn main() -> anyhow::Result<()> {
             },
             // Handle control requests
             ctl = ctl_rx.next() => {
-                if let Some(CommandHandle{c, tx}) = ctl {
-                    debug!("Received command: {:?}", c);
-                    if let Some(r) = d.handle_cmd(c).await? {
-                        tx.send(r).await?;
+                if let Some(h) = ctl {
+                    debug!("Received command: {:?}", h.c);
+                    if let Some(r) = d.handle_cmd(&h).await? {
+                        h.tx.send(r).await?;
                     }
                 }
             },
@@ -93,10 +93,28 @@ async fn main() -> anyhow::Result<()> {
                     trace!("Input event: {:?}", evt);
 
                     // Map input to output event
-                    // TODO: multi-device and reconfigurable mappings
+                    // TODO: multi-device and reconfigurable mappings?
                     if let Some((map, val)) = d.config.map(&evt) {
                         map.event(&v, evt.time, val)?;
                     }
+
+                    // Convert input event to axis value
+                    if let Ok(v) = AxisValue::try_from(evt) {
+                        
+
+                        // Write to connected listeners
+                        for tx in &d.listeners {
+                            let tx = tx.clone();
+                            let v = v.clone();
+
+                            let _ = async_std::task::spawn(async move {
+                                tx.send(Command::RawValue(v)).await
+                            });
+                        }
+
+                    };
+
+                    // TODO: handle button events
                 }
             }
             // Handle exit message
@@ -113,6 +131,7 @@ async fn main() -> anyhow::Result<()> {
 pub struct Daemon {
     config: Config,
     evt_tx: Sender<InputEvent>,
+    listeners: Vec<Sender<Command>>,
 }
 
 impl Daemon {
@@ -120,6 +139,7 @@ impl Daemon {
         Self{
             config,
             evt_tx,
+            listeners: vec![],
         }
     }
 
@@ -152,7 +172,7 @@ impl Daemon {
                         if let Some(c) = c {
                             let enc: Vec<u8> = bincode::serialize(&c)?;
 
-                            debug!("Sending: {:02x?}", enc);
+                            trace!("Sending: {:02x?}", enc);
 
                             stream.write(&enc).await?;
                         } else {
@@ -209,8 +229,8 @@ impl Daemon {
         Ok(())
     }
 
-    async fn handle_cmd(&mut self, cmd: Command) -> anyhow::Result<Option<Command>> {
-        let resp = match cmd {
+    async fn handle_cmd(&mut self, h: &CommandHandle) -> anyhow::Result<Option<Command>> {
+        let resp = match &h.c {
             Command::Ping => Some(Command::Ok),
             Command::Bind { event } => {
                 info!("Binding device: {}", event);
@@ -224,6 +244,10 @@ impl Daemon {
                         Some(Command::Failed)
                     }
                 }
+            },
+            Command::Listen => {
+                self.listeners.push(h.tx.clone());
+                Some(Command::Ok)
             },
             _ => None,
         };

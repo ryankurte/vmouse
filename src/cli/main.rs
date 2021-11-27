@@ -3,12 +3,13 @@ use std::os::unix::net::UnixStream;
 use std::io::{ErrorKind, Read, Write};
 use std::time::Duration;
 
+use futures::StreamExt;
 use structopt::StructOpt;
 
 use log::{LevelFilter, debug, info};
 use simplelog::{SimpleLogger, Config as LogConfig};
 
-use vmouse::Command;
+use vmouse::{Client, Command};
 
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]
@@ -25,8 +26,8 @@ pub struct Options {
     pub log_level: LevelFilter,
 }
 
-
-fn main() -> anyhow::Result<()> {
+#[async_std::main]
+async fn main() -> anyhow::Result<()> {
     // Parse command line arguments
     let opts = Options::from_args();
 
@@ -38,26 +39,17 @@ fn main() -> anyhow::Result<()> {
     debug!("Connecting to socket: {}", opts.socket);
 
     // Connect to daemon socket
-    let mut stream = UnixStream::connect(opts.socket)?;
-    stream.set_read_timeout(Some(Duration::from_millis(1000)))?;
+    let mut client = Client::connect(opts.socket.clone()).await?;
 
-    // Encode command
-    let encoded: Vec<u8> = bincode::serialize(&opts.command)?;
-
-    debug!("Writing command: {:?} ({:02x?})", opts.command, encoded);
+    debug!("Writing command: {:?}", opts.command);
 
     // Write command
-    let _n = stream.write_all(&encoded)?;
-
-    let mut buff = [0u8; 1024];
+    client.send(opts.command.clone()).await?;
 
     // Await response
-    let n = stream.read(&mut buff)?;
+    let r = client.next().await;
 
-    // Decode response
-    let decoded: Command = bincode::deserialize(&buff[..n])?;
-
-    debug!("Received response: {:?}", decoded);
+    debug!("Received response: {:?}", r);
 
     Ok(())
 }

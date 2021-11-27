@@ -1,37 +1,29 @@
 
-use structopt::StructOpt;
-use serde::{Serialize, Deserialize};
 
-use log::debug;
+use std::os::unix::prelude::AsRawFd;
+use std::pin::Pin;
+use std::task::Poll;
+use std::time::Duration;
+
+use async_std::channel::{Receiver, Sender};
+use async_std::os::unix::net::UnixStream;
+use futures::stream::BoxStream;
+use futures::{AsyncRead, AsyncWriteExt, Sink, Stream};
+use structopt::StructOpt;
+use strum_macros::Display;
+use serde::{Serialize, Deserialize};
 
 use evdev_rs::{TimeVal, InputEvent, UInputDevice, UninitDevice, DeviceWrapper};
 use evdev_rs::enums::{EventCode, EventType, BusType, EV_REL, EV_KEY, EV_SYN};
 
 
-/// Enabled event types
-pub const EVENT_TYPES: &[EventType] = &[
-    EventType::EV_KEY,
-    EventType::EV_REL,
-];
+use log::{trace, debug};
 
-/// Enabled event codes
-pub const EVENT_CODES: &[EventCode] = &[
-    EventCode::EV_KEY(EV_KEY::BTN_LEFT),
-    EventCode::EV_KEY(EV_KEY::BTN_RIGHT),
 
-    EventCode::EV_REL(EV_REL::REL_X),
-    EventCode::EV_REL(EV_REL::REL_Y),
-    EventCode::EV_REL(EV_REL::REL_WHEEL),
-    EventCode::EV_REL(EV_REL::REL_HWHEEL),
-    EventCode::EV_REL(EV_REL::REL_WHEEL_HI_RES),
-    EventCode::EV_REL(EV_REL::REL_HWHEEL_HI_RES),
-
-    EventCode::EV_SYN(EV_SYN::SYN_REPORT),
-];
-
-pub const AXIS_MAX: i32 = 350;
-pub const AXIS_MIN: i32 = -350;
-
+pub mod events;
+pub use events::*;
+pub mod axis;
+pub use axis::*;
 
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]
@@ -44,36 +36,23 @@ pub enum Command {
         event: String,
     },
     Ok,
+    Listen,
     Failed,
+    RawValue(AxisValue),
 }
 
 
 /// Mouse re-mapping configuration
-#[derive(Copy, Clone, PartialEq)]
-#[derive(serde::Serialize, serde::Deserialize)]
-pub struct Config {
-    /// Input x axis
-    pub x: Axis,
-    /// Input y axis
-    pub y: Axis,
-    /// Input z axis
-    pub z: Axis,
-    /// Input rx axis
-    pub rx: Axis,
-    /// Input ry axis
-    pub ry: Axis,
-    /// Input rz axis
-    pub rz: Axis,
-}
+pub type Config = axis::AxisCollection<AxisConfig>;
 
-impl Default for Config {
-    fn default() -> Self {
+impl Config {
+    pub fn standard() -> Self {
         Self { 
-            x: Axis{map: Map::H, scale: 0.005, curve: Some(0.5)}, 
-            y: Axis{map: Map::V, scale: 0.005, curve: Some(0.5)}, 
+            x: AxisConfig{map: Map::H, scale: 0.005, curve: Some(0.5)}, 
+            y: AxisConfig{map: Map::V, scale: 0.005, curve: Some(0.5)}, 
             z: Default::default(), 
-            rx: Axis{map: Map::Y, scale: 0.2, curve: Some(1.0)},
-            ry: Axis{map: Map::X, scale: -0.2, curve: Some(1.0)}, 
+            rx: AxisConfig{map: Map::Y, scale: 0.2, curve: Some(1.0)},
+            ry: AxisConfig{map: Map::X, scale: -0.2, curve: Some(1.0)}, 
             rz: Default::default(),
         }
     }
@@ -113,7 +92,7 @@ impl Config {
 #[derive(Copy, Clone, PartialEq)]
 #[derive(serde::Serialize, serde::Deserialize)]
 
-pub struct Axis {
+pub struct AxisConfig {
     /// Output axis mapping
     pub map: Map,
 
@@ -124,9 +103,9 @@ pub struct Axis {
     pub scale: f32,
 }
 
-impl Default for Axis {
+impl Default for AxisConfig {
     fn default() -> Self {
-        Axis {
+        Self {
             scale: 0.5,
             map: Map::None,
             curve: None,
@@ -239,4 +218,59 @@ pub fn virtual_device() -> Result<UInputDevice, anyhow::Error> {
     debug!("Created virtual device: {}", v.devnode().unwrap());
 
     Ok(v)
+}
+
+#[derive(Clone, Debug)]
+pub struct Client {
+    path: String,
+    stream: UnixStream,
+}
+
+impl Client {
+    pub async fn connect(path: String) -> Result<Self, std::io::Error> {
+        // Connect to daemon socket
+        let stream = UnixStream::connect(&path).await?;
+        
+        Ok(Self{path, stream})
+    }
+
+    pub async fn send(&mut self, cmd: Command) -> Result<(), anyhow::Error> {
+        let encoded: Vec<u8> = bincode::serialize(&cmd)?;
+
+        debug!("Send: {:?}", cmd);
+        
+        let _n = self.stream.write_all(&encoded).await?;
+        
+        Ok(())
+    }
+}
+
+impl Stream for Client {
+    type Item = Result<Command, anyhow::Error>;
+
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut buff = vec![0u8; 1024];
+
+        let n = match Pin::new(&mut self.stream).poll_read(cx, &mut buff) {
+            Poll::Ready(Ok(n)) => n,
+            Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e.into()))),
+            Poll::Pending => return Poll::Pending,
+        };
+
+        let decoded: Command = match bincode::deserialize(&buff[..n]) {
+            Ok(d) => d,
+            Err(e) => return Poll::Ready(Some(Err(e.into()))),
+        };
+
+        trace!("Receive: {:?}", decoded);
+
+        Poll::Ready(Some(Ok(decoded)))
+    }
+}
+
+impl std::hash::Hash for Client {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.path.hash(state);
+        self.stream.as_raw_fd().hash(state);
+    }
 }
