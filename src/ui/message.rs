@@ -2,8 +2,6 @@ use std::sync::{Arc, Mutex};
 
 use vmouse::{Axis, Client, Command, Map};
 
-
-
 #[derive(Clone, Debug)]
 pub enum Message {
     None,

@@ -1,17 +1,26 @@
-use std::{hash::Hash, ops::{Index, IndexMut}, sync::{Arc, Mutex}, time::Duration};
+use std::{
+    hash::Hash,
+    sync::{Arc, Mutex},
+};
 
-use futures::{StreamExt, stream::BoxStream};
-use iced::{Application, Canvas, Column, Command, Container, Element, Length, PickList, Point, ProgressBar, Row, Settings, Size, Slider, Text, TextInput, Vector, pick_list, slider, text_input, alignment::{self, Horizontal}, Alignment};
-use iced::canvas::{self, Cache, LineCap, Path, Stroke};
-use iced_native::{Color, Widget, layout, renderer, subscription::Recipe, widget::{Button, button}, Renderer};
+use futures::{stream::BoxStream, StreamExt};
+
+use iced::{
+    alignment::{self, Horizontal},
+    pick_list, slider, text_input, Alignment, Application, Canvas, Column, Command, Length, PickList, ProgressBar, Row, Settings, Slider, Text, TextInput,
+};
+use iced_native::{
+    subscription::Recipe,
+    widget::{button, Button},
+};
 
 use structopt::StructOpt;
-use strum::VariantNames;
 
-use log::{LevelFilter, debug, info, error};
-use simplelog::{SimpleLogger, Config as LogConfig};
 
-use vmouse::{AXIS, AXIS_LIN, AXIS_ROT, Axis, AxisCollection, Client, Config, Map, MAPPINGS};
+use log::{debug, error, info, LevelFilter};
+use simplelog::{Config as LogConfig, SimpleLogger};
+
+use vmouse::{Axis, AxisCollection, Client, Config, Map, AXIS, AXIS_LIN, AXIS_ROT, MAPPINGS};
 
 mod cg;
 use cg::CurveGraph;
@@ -21,11 +30,9 @@ use message::Message;
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]
 pub struct Options {
-
-    #[structopt(long, default_value="debug")]
+    #[structopt(long, default_value = "debug")]
     pub log_level: LevelFilter,
 }
-
 
 #[async_std::main]
 async fn main() -> anyhow::Result<()> {
@@ -68,7 +75,7 @@ struct App {
     attached: bool,
 
     connect_state: button::State,
-    
+
     client: Option<Client>,
 }
 
@@ -83,37 +90,40 @@ impl Application for App {
         let config = Config::standard();
 
         // TODO: commands to run setup go here
-        (Self{
-            values: Default::default(),
-            
-            scale_state: Default::default(),
-            apply_scale_state: Default::default(),
-            scale_text: Default::default(),
+        (
+            Self {
+                values: Default::default(),
 
-            curve_slider: Default::default(),
-            deadzone_slider: Default::default(),
+                scale_state: Default::default(),
+                apply_scale_state: Default::default(),
+                scale_text: Default::default(),
 
-            config: Config::standard(),
+                curve_slider: Default::default(),
+                deadzone_slider: Default::default(),
 
-            cgs: AxisCollection::with_axis(|a| Arc::new(CurveGraph::new(a, config[a].clone(), 0.0))),
+                config: Config::standard(),
 
-            axis: Axis::X,
-            pick_axis: Default::default(),
-            pick_map: Default::default(),
+                cgs: AxisCollection::with_axis(|a| {
+                    Arc::new(CurveGraph::new(a, config[a], 0.0))
+                }),
 
-            socket_state: Default::default(),
-            socket: socket.clone(),
+                axis: Axis::X,
+                pick_axis: Default::default(),
+                pick_map: Default::default(),
 
-            apply_state: Default::default(),
-            revert_state: Default::default(),
-            attach_state: Default::default(),
-            attached: true,
+                socket_state: Default::default(),
+                socket: socket.clone(),
 
-            connect_state: Default::default(),
-            client: None,
-        }, iced::Command::batch(vec![
-            Self::connect(socket.clone())
-        ]))
+                apply_state: Default::default(),
+                revert_state: Default::default(),
+                attach_state: Default::default(),
+                attached: true,
+
+                connect_state: Default::default(),
+                client: None,
+            },
+            iced::Command::batch(vec![Self::connect(socket)]),
+        )
     }
 
     fn title(&self) -> String {
@@ -121,15 +131,11 @@ impl Application for App {
     }
 
     // Handle events
-    fn update(
-        &mut self,
-        message: Self::Message
-    ) -> iced::Command<Self::Message> {
-        
+    fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match (message, self.client.clone()) {
             (Message::Connect, None) => {
                 return Self::connect(self.socket.clone());
-            },
+            }
             (Message::Connected(client), _) => {
                 debug!("Received client, unpacking");
                 let c = client.lock().unwrap().take();
@@ -138,29 +144,28 @@ impl Application for App {
                 if let Some(c) = c {
                     return Self::command(c, vmouse::Command::GetConfig);
                 }
-            },
+            }
             (Message::Disconnect, Some(_)) => {
                 let _ = self.client.take();
             }
             (Message::ApplyConfig, Some(c)) => {
-                return Self::command(c, vmouse::Command::Config(self.config.clone()));
-            },
+                return Self::command(c, vmouse::Command::Config(self.config));
+            }
             (Message::RevertConfig, Some(c)) => {
                 return Self::command(c, vmouse::Command::GetConfig);
-
-            },
+            }
             (Message::Attach, Some(c)) => {
                 self.attached = true;
-                return Self::command(c, vmouse::Command::Enable{enabled: true});
-            },
+                return Self::command(c, vmouse::Command::Enable { enabled: true });
+            }
             (Message::Detach, Some(c)) => {
                 self.attached = false;
-                return Self::command(c, vmouse::Command::Enable{enabled: false});
+                return Self::command(c, vmouse::Command::Enable { enabled: false });
             }
             (Message::ScaleChanged(_a, s), _) => {
                 // Update scale string
                 self.scale_text = s;
-            },
+            }
             (Message::ApplyScale, _) => {
                 // Update scale if value is valid
                 let v = match self.scale_text.parse::<f32>() {
@@ -175,8 +180,7 @@ impl Application for App {
                     info!("Applying scale {:0.4} for axis: {}", v, self.axis);
 
                     self.config[self.axis].scale = v;
-                    self.cgs[self.axis].set_config(self.config[self.axis].clone());
-
+                    self.cgs[self.axis].set_config(self.config[self.axis]);
                 } else {
                     error!("Scale value: {:0.4} exceeds maximum range", v);
                 }
@@ -186,24 +190,24 @@ impl Application for App {
             }
             (Message::CurveChanged(a, c), _) => {
                 self.config[a].curve = c;
-                self.cgs[a].set_config(self.config[a].clone());
-            },
+                self.cgs[a].set_config(self.config[a]);
+            }
             (Message::DeadzoneChanged(a, d), _) => {
                 self.config[a].deadzone = d;
-                self.cgs[a].set_config(self.config[a].clone());
-            },
+                self.cgs[a].set_config(self.config[a]);
+            }
             (Message::ValueChanged(a, v), _) => {
                 self.values[a] = v;
                 self.cgs[a].set_value(v);
-            },
+            }
             (Message::SelectAxis(a), _) => {
                 self.axis = a;
 
                 self.scale_text = format!("{:0.4}", self.config[a].scale);
-            },
+            }
             (Message::SocketChanged(socket), _) => {
                 self.socket = socket;
-            },
+            }
 
             (Message::Command(vmouse::Command::Config(c)), _) => {
                 debug!("Received config: {:?}", c);
@@ -212,7 +216,7 @@ impl Application for App {
 
                 // Update curve graphs
                 for a in AXIS {
-                    self.cgs[*a].set_config(self.config[*a].clone());
+                    self.cgs[*a].set_config(self.config[*a]);
                 }
 
                 self.scale_text = format!("{:0.4}", self.config[self.axis].scale);
@@ -225,10 +229,10 @@ impl Application for App {
                 for a in AXIS {
                     self.cgs[*a].set_value(s[*a]);
                 }
-            },
+            }
             (Message::Command(cmd), _) => {
-                debug!("Received command: {:?}", cmd);         
-            },
+                debug!("Received command: {:?}", cmd);
+            }
             _ => (),
         }
 
@@ -237,36 +241,41 @@ impl Application for App {
 
     fn subscription(&self) -> iced::Subscription<Self::Message> {
         if let Some(c) = self.client.clone() {
-            iced::Subscription::from_recipe(Idk{client: c})
+            iced::Subscription::from_recipe(Idk { client: c })
         } else {
             iced::Subscription::none()
         }
     }
 
     fn view(&mut self) -> iced::Element<'_, Self::Message> {
-
-        let mut column_lin = Column::new().padding(5)
-            .height(Length::Fill).width(Length::FillPortion(2));
+        let mut column_lin = Column::new()
+            .padding(5)
+            .height(Length::Fill)
+            .width(Length::FillPortion(2));
         for a in AXIS_LIN {
             let g = Canvas::new(self.cgs[*a].clone())
                 .width(Length::FillPortion(2))
                 .height(Length::FillPortion(2));
 
-            let row = Row::new().padding(10)
+            let row = Row::new()
+                .padding(10)
                 .height(Length::FillPortion(2))
                 .push(g);
 
             column_lin = column_lin.push(row);
         }
 
-        let mut column_rot = Column::new().padding(5)
-            .height(Length::Fill).width(Length::FillPortion(2));
+        let mut column_rot = Column::new()
+            .padding(5)
+            .height(Length::Fill)
+            .width(Length::FillPortion(2));
         for a in AXIS_ROT {
             let g = Canvas::new(self.cgs[*a].clone())
                 .width(Length::FillPortion(2))
                 .height(Length::FillPortion(2));
 
-            let row = Row::new().padding(10)
+            let row = Row::new()
+                .padding(10)
                 .height(Length::FillPortion(2))
                 .push(g);
 
@@ -275,92 +284,154 @@ impl Application for App {
 
         let axis = self.axis;
 
-        let mut connect_ctl = Row::new().spacing(10).align_items(Alignment::Center)
-        .push(TextInput::new(&mut self.socket_state, "socket", &self.socket, Message::SocketChanged).width(Length::FillPortion(2)));
+        let mut connect_ctl = Row::new().spacing(10).align_items(Alignment::Center).push(
+            TextInput::new(
+                &mut self.socket_state,
+                "socket",
+                &self.socket,
+                Message::SocketChanged,
+            )
+            .width(Length::FillPortion(2)),
+        );
         if self.client.is_none() {
-            connect_ctl = connect_ctl.push(Button::new(&mut self.connect_state, Text::new("connect").horizontal_alignment(Horizontal::Center)).on_press(Message::Connect).width(Length::FillPortion(1)))
+            connect_ctl = connect_ctl.push(
+                Button::new(
+                    &mut self.connect_state,
+                    Text::new("connect").horizontal_alignment(Horizontal::Center),
+                )
+                .on_press(Message::Connect)
+                .width(Length::FillPortion(1)),
+            )
         } else {
-            connect_ctl = connect_ctl.push(Button::new(&mut self.connect_state, Text::new("disconnect").horizontal_alignment(Horizontal::Center)).on_press(Message::Disconnect).width(Length::FillPortion(1)))
+            connect_ctl = connect_ctl.push(
+                Button::new(
+                    &mut self.connect_state,
+                    Text::new("disconnect").horizontal_alignment(Horizontal::Center),
+                )
+                .on_press(Message::Disconnect)
+                .width(Length::FillPortion(1)),
+            )
         }
 
-        let mut config_ctl = Row::new().spacing(10).align_items(Alignment::Center)
-            .push(Button::new(&mut self.apply_state, Text::new("apply").horizontal_alignment(Horizontal::Center)).on_press(Message::ApplyConfig).width(Length::FillPortion(1)))
-            .push(Button::new(&mut self.revert_state, Text::new("revert").horizontal_alignment(Horizontal::Center)).on_press(Message::RevertConfig).width(Length::FillPortion(1)));
+        let mut config_ctl = Row::new()
+            .spacing(10)
+            .align_items(Alignment::Center)
+            .push(
+                Button::new(
+                    &mut self.apply_state,
+                    Text::new("apply").horizontal_alignment(Horizontal::Center),
+                )
+                .on_press(Message::ApplyConfig)
+                .width(Length::FillPortion(1)),
+            )
+            .push(
+                Button::new(
+                    &mut self.revert_state,
+                    Text::new("revert").horizontal_alignment(Horizontal::Center),
+                )
+                .on_press(Message::RevertConfig)
+                .width(Length::FillPortion(1)),
+            );
         if !self.attached {
-            config_ctl = config_ctl.push(Button::new(&mut self.attach_state, Text::new("attach").horizontal_alignment(Horizontal::Center)).on_press(Message::Attach).width(Length::FillPortion(1)))
+            config_ctl = config_ctl.push(
+                Button::new(
+                    &mut self.attach_state,
+                    Text::new("attach").horizontal_alignment(Horizontal::Center),
+                )
+                .on_press(Message::Attach)
+                .width(Length::FillPortion(1)),
+            )
         } else {
-            config_ctl = config_ctl.push(Button::new(&mut self.attach_state, Text::new("detach").horizontal_alignment(Horizontal::Center)).on_press(Message::Detach).width(Length::FillPortion(1)))
+            config_ctl = config_ctl.push(
+                Button::new(
+                    &mut self.attach_state,
+                    Text::new("detach").horizontal_alignment(Horizontal::Center),
+                )
+                .on_press(Message::Detach)
+                .width(Length::FillPortion(1)),
+            )
         }
 
-        let column_ctrl = Column::new().padding(10).spacing(10)
-        .height(Length::Fill).width(Length::FillPortion(2))
-        // Axis selection
-        .push(Text::new("Axis:").vertical_alignment(alignment::Vertical::Center))
-        .push(PickList::new(
-            &mut self.pick_axis,
-            AXIS,
-            Some(self.axis),
-            Message::SelectAxis,
-        ).width(Length::Fill))
-        
-        // Current value display
-        .push(Text::new("Value:").vertical_alignment(alignment::Vertical::Center))
-        .push(ProgressBar::new(-1.0..=1.0, self.values[axis]))
-        .push(Row::new().height(Length::Units(10)))
-
-        // Mapping configuration
-        .push(Text::new("Mapping:").vertical_alignment(alignment::Vertical::Center))
-        .push(PickList::new(
-            &mut self.pick_map,
-            MAPPINGS,
-            Some(self.config[self.axis].map),
-            Message::MappingChanged,
-        ).width(Length::Fill))
-        
-
-        // Scale configuration
-        .push(Text::new("Scale:").vertical_alignment(alignment::Vertical::Center))
-        .push(Row::new().spacing(10).align_items(Alignment::Center)
-            .push(TextInput::new(&mut self.scale_state, "scale", &self.scale_text, move |s| Message::ScaleChanged(axis, s) ))
-            .push(Button::new(&mut self.apply_scale_state, Text::new("apply")).on_press(Message::ApplyScale))
-        )
-
-        // Curve configuration
-        .push(Text::new("Curve:").vertical_alignment(alignment::Vertical::Center))
-        .push(ProgressBar::new(0.0..=1.0, self.config[axis].curve))
-        .push(
-            Slider::new(
-                &mut self.curve_slider[axis],
-                0.0..=1.0,
-                self.config[axis].curve,
-                move |x| Message::CurveChanged(axis, x),
+        let column_ctrl = Column::new()
+            .padding(10)
+            .spacing(10)
+            .height(Length::Fill)
+            .width(Length::FillPortion(2))
+            // Axis selection
+            .push(Text::new("Axis:").vertical_alignment(alignment::Vertical::Center))
+            .push(
+                PickList::new(
+                    &mut self.pick_axis,
+                    AXIS,
+                    Some(self.axis),
+                    Message::SelectAxis,
+                )
+                .width(Length::Fill),
             )
-            .step(0.01),
-        )
-
-        // Deadzone configuration
-        .push(Text::new("Deadzone:").vertical_alignment(alignment::Vertical::Center))
-        .push(ProgressBar::new(0.0..=1.0, self.config[axis].deadzone))
-        .push(
-            Slider::new(
-                &mut self.deadzone_slider[axis],
-                0.0..=1.0,
-                self.config[axis].deadzone,
-                move |d| Message::DeadzoneChanged(axis, d),
+            // Current value display
+            .push(Text::new("Value:").vertical_alignment(alignment::Vertical::Center))
+            .push(ProgressBar::new(-1.0..=1.0, self.values[axis]))
+            .push(Row::new().height(Length::Units(10)))
+            // Mapping configuration
+            .push(Text::new("Mapping:").vertical_alignment(alignment::Vertical::Center))
+            .push(
+                PickList::new(
+                    &mut self.pick_map,
+                    MAPPINGS,
+                    Some(self.config[self.axis].map),
+                    Message::MappingChanged,
+                )
+                .width(Length::Fill),
             )
-            .step(0.01),
-        )
-
-        .push(Row::new().height(Length::Fill))
-
-
-        .push(Text::new("Control:").vertical_alignment(alignment::Vertical::Center))
-        .push(config_ctl)
-
-        // Daemon connection
-        .push(Text::new("Socket:").vertical_alignment(alignment::Vertical::Center))
-        .push(connect_ctl);
-        Row::new().padding(10)
+            // Scale configuration
+            .push(Text::new("Scale:").vertical_alignment(alignment::Vertical::Center))
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .align_items(Alignment::Center)
+                    .push(TextInput::new(
+                        &mut self.scale_state,
+                        "scale",
+                        &self.scale_text,
+                        move |s| Message::ScaleChanged(axis, s),
+                    ))
+                    .push(
+                        Button::new(&mut self.apply_scale_state, Text::new("apply"))
+                            .on_press(Message::ApplyScale),
+                    ),
+            )
+            // Curve configuration
+            .push(Text::new("Curve:").vertical_alignment(alignment::Vertical::Center))
+            .push(ProgressBar::new(0.0..=1.0, self.config[axis].curve))
+            .push(
+                Slider::new(
+                    &mut self.curve_slider[axis],
+                    0.0..=1.0,
+                    self.config[axis].curve,
+                    move |x| Message::CurveChanged(axis, x),
+                )
+                .step(0.01),
+            )
+            // Deadzone configuration
+            .push(Text::new("Deadzone:").vertical_alignment(alignment::Vertical::Center))
+            .push(ProgressBar::new(0.0..=1.0, self.config[axis].deadzone))
+            .push(
+                Slider::new(
+                    &mut self.deadzone_slider[axis],
+                    0.0..=1.0,
+                    self.config[axis].deadzone,
+                    move |d| Message::DeadzoneChanged(axis, d),
+                )
+                .step(0.01),
+            )
+            .push(Row::new().height(Length::Fill))
+            .push(Text::new("Control:").vertical_alignment(alignment::Vertical::Center))
+            .push(config_ctl)
+            // Daemon connection
+            .push(Text::new("Socket:").vertical_alignment(alignment::Vertical::Center))
+            .push(connect_ctl);
+        Row::new()
+            .padding(10)
             .push(column_lin)
             .push(column_rot)
             .push(column_ctrl)
@@ -368,44 +439,45 @@ impl Application for App {
     }
 }
 
-
 impl App {
     fn connect(socket: String) -> Command<Message> {
-        Command::perform(async move {
-            debug!("Connecting to socket: {}", socket);
-            let mut c = Client::connect(socket).await?;
-            
-            debug!("Subscribing to socket events");
-            c.send(vmouse::Command::Listen).await?;
+        Command::perform(
+            async move {
+                debug!("Connecting to socket: {}", socket);
+                let mut c = Client::connect(socket).await?;
 
-            debug!("Subscribe ok!");
+                debug!("Subscribing to socket events");
+                c.send(vmouse::Command::Listen).await?;
 
-            Ok(c)
-        }, |r: Result<Client, anyhow::Error>| {
-            match r {
+                debug!("Subscribe ok!");
+
+                Ok(c)
+            },
+            |r: Result<Client, anyhow::Error>| match r {
                 Ok(c) => Message::Connected(Arc::new(Mutex::new(Some(c)))),
                 Err(e) => {
                     error!("Connection failed: {:?}", e);
                     Message::Tick
                 }
-            }
-        })
+            },
+        )
     }
 
     fn command(mut client: Client, cmd: vmouse::Command) -> Command<Message> {
-        Command::perform(async move {
-            debug!("Issuing config get request");
-            client.send(cmd).await?;
-            Ok(())
-        }, |r: Result<(), anyhow::Error>| {
-            match r {
+        Command::perform(
+            async move {
+                debug!("Issuing config get request");
+                client.send(cmd).await?;
+                Ok(())
+            },
+            |r: Result<(), anyhow::Error>| match r {
                 Ok(_c) => Message::Tick,
                 Err(e) => {
                     error!("Connection failed: {:?}", e);
                     Message::Tick
                 }
-            }
-        })
+            },
+        )
     }
 }
 
@@ -413,7 +485,7 @@ struct Idk {
     client: Client,
 }
 
-impl <H, I> Recipe<H, I>  for Idk 
+impl<H, I> Recipe<H, I> for Idk
 where
     H: std::hash::Hasher,
 {
@@ -423,15 +495,10 @@ where
         self.client.hash(state)
     }
 
-    fn stream(
-        self: Box<Self>,
-        _input: BoxStream<I>,
-    ) -> BoxStream<Self::Output> {
-        Box::pin(self.client.map(|r| {
-            match r {
-                Ok(v) => Message::Command(v),
-                Err(_e) => Message::Tick,
-            }
+    fn stream(self: Box<Self>, _input: BoxStream<I>) -> BoxStream<Self::Output> {
+        Box::pin(self.client.map(|r| match r {
+            Ok(v) => Message::Command(v),
+            Err(_e) => Message::Tick,
         }))
     }
 }

@@ -1,40 +1,36 @@
-
 use std::collections::HashMap;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+
+
+
 
 use std::fs::File;
 
-use std::io::{Read, ErrorKind};
+use std::io::{ErrorKind};
 use std::time::Duration;
 
 use async_std::task::JoinHandle;
-use evdev_rs::{Device, DeviceWrapper, UInputDevice, InputEvent, ReadFlag};
-use futures::{FutureExt, stream::StreamExt as _};
-
+use evdev_rs::{Device, DeviceWrapper, InputEvent, ReadFlag};
+use futures::{stream::StreamExt as _, FutureExt};
 
 use async_std::channel::Sender;
-use async_std::{io::ReadExt, io::WriteExt};
 use async_std::os::unix::net::{UnixListener, UnixStream};
+use async_std::{io::ReadExt, io::WriteExt};
 
 use structopt::StructOpt;
 
-use log::{LevelFilter, trace, debug, info, error};
-use simplelog::{SimpleLogger, Config as LogConfig};
+use log::{debug, error, info, trace, LevelFilter};
+use simplelog::{Config as LogConfig, SimpleLogger};
 
-use vmouse::{Command, Config, AxisValue, AxisCollection, Client};
-
+use vmouse::{AxisCollection, AxisValue, Command, Config};
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]
 pub struct Options {
-
     /// Socket for daemon connections
-    #[structopt(long, default_value="/var/run/vmouse.sock")]
+    #[structopt(long, default_value = "/var/run/vmouse.sock")]
     pub socket: String,
 
     /// Log verbosity
-    #[structopt(long, default_value="debug")]
+    #[structopt(long, default_value = "debug")]
     pub log_level: LevelFilter,
 }
 
@@ -128,7 +124,7 @@ async fn main() -> anyhow::Result<()> {
                     let tx = c.tx.clone();
 
                     let _ = async_std::task::spawn(async move {
-                        tx.send(Command::State(d.state.clone())).await
+                        tx.send(Command::State(d.state)).await
                     });
                 }
 
@@ -163,11 +159,9 @@ pub struct Daemon {
     changed: bool,
 }
 
-
 impl Daemon {
     fn new(config: Config, evt_tx: Sender<InputEvent>, tick_tx: Sender<()>) -> Self {
-
-        Self{
+        Self {
             id: 0,
             config,
             enabled: true,
@@ -180,8 +174,12 @@ impl Daemon {
         }
     }
 
-     // Create and attach a new client
-    async fn attach_client(&mut self, mut stream: UnixStream, ctl_tx: Sender<CommandHandle>) -> anyhow::Result<()> {
+    // Create and attach a new client
+    async fn attach_client(
+        &mut self,
+        mut stream: UnixStream,
+        ctl_tx: Sender<CommandHandle>,
+    ) -> anyhow::Result<()> {
         let id = self.id;
         self.id = self.id.wrapping_add(1);
 
@@ -204,11 +202,11 @@ impl Daemon {
                             Err(e) if e.kind() == ErrorKind::TimedOut => continue,
                             Err(e) => break Err(e.into()),
                         };
-                
+
                         debug!("Received: {:02x?}", r);
-                
+
                         let c: Command = bincode::deserialize(r)?;
-                
+
                         ctl_tx.send(CommandHandle{id, c, tx: resp_tx.clone()}).await?;
                     },
                     // Forward responses
@@ -229,7 +227,13 @@ impl Daemon {
 
             debug!("Disconnecting from client: {}", id);
 
-            ctl_tx.send(CommandHandle{id, c: Command::Disconnect, tx: resp_tx.clone() }).await?;
+            ctl_tx
+                .send(CommandHandle {
+                    id,
+                    c: Command::Disconnect,
+                    tx: resp_tx.clone(),
+                })
+                .await?;
 
             res
         });
@@ -237,7 +241,7 @@ impl Daemon {
         // Create client handle
         let client = ClientHandle {
             id,
-            h,
+            _h: h,
             tx,
             listen: false,
         };
@@ -252,7 +256,7 @@ impl Daemon {
         if self.update_task.is_none() {
             let tick_tx = self.tick_tx.clone();
 
-            let h = async_std::task::spawn(async move {      
+            let h = async_std::task::spawn(async move {
                 let mut t = async_std::stream::interval(Duration::from_millis(100));
 
                 loop {
@@ -266,7 +270,6 @@ impl Daemon {
     }
 
     async fn attach_device(&mut self, device: String) -> anyhow::Result<()> {
-
         // Connect to device
         let f = File::open(&device)?;
         let d = Device::new_from_file(f)?;
@@ -275,8 +278,12 @@ impl Daemon {
 
         // Log device info
         if let Some(n) = d.name() {
-            info!("Connected to device: '{}' ({:04x}:{:04x})", 
-                n, d.vendor_id(), d.product_id());
+            info!(
+                "Connected to device: '{}' ({:04x}:{:04x})",
+                n,
+                d.vendor_id(),
+                d.product_id()
+            );
         }
 
         // Wrap device in async adapter
@@ -314,26 +321,26 @@ impl Daemon {
                     Ok(_) => {
                         info!("Device {} attach OK!", event);
                         Some(Command::Ok)
-                    },
+                    }
                     Err(e) => {
                         error!("Device {} attach failed: {:?}", event, e);
                         Some(Command::Failed)
                     }
                 }
-            },
-            Command::Enable{enabled} => {
+            }
+            Command::Enable { enabled } => {
                 self.enabled = *enabled;
                 Some(Command::Ok)
-            },
-            Command::GetState => Some(Command::State(self.state.clone())),
-            Command::GetConfig => Some(Command::Config(self.config.clone())),
+            }
+            Command::GetState => Some(Command::State(self.state)),
+            Command::GetConfig => Some(Command::Config(self.config)),
             Command::Config(c) => {
                 debug!("Updating config: {:?}", c);
 
-                self.config = c.clone();
-                
+                self.config = *c;
+
                 Some(Command::Ok)
-            },
+            }
             Command::Listen => {
                 // Set client listen flag
                 if let Some(c) = self.clients.get_mut(&h.id) {
@@ -345,7 +352,7 @@ impl Daemon {
 
                 // Signal listen success
                 Some(Command::Ok)
-            },
+            }
             Command::Disconnect => {
                 debug!("Removing client: {}", h.id);
 
@@ -357,13 +364,13 @@ impl Daemon {
                 match (listening, self.update_task.take()) {
                     (false, Some(t)) => {
                         let _ = t.cancel().await;
-                    },
+                    }
                     (_, Some(t)) => self.update_task = Some(t),
                     _ => (),
                 }
 
                 None
-            },
+            }
             _ => None,
         };
 
@@ -371,15 +378,11 @@ impl Daemon {
     }
 }
 
-struct DeviceHandle {
-    h: JoinHandle<Result<(), anyhow::Error>>,
-}
-
 struct ClientHandle {
     id: u32,
     tx: Sender<Command>,
     listen: bool,
-    h: JoinHandle<Result<(), anyhow::Error>>,
+    _h: JoinHandle<Result<(), anyhow::Error>>,
 }
 
 struct CommandHandle {
@@ -390,4 +393,3 @@ struct CommandHandle {
     /// Response channel
     pub tx: Sender<Command>,
 }
-

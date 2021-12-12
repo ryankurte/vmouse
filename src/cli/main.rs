@@ -1,16 +1,14 @@
 
-use std::os::unix::net::UnixStream;
-use std::io::{ErrorKind, Read, Write};
-use std::time::Duration;
+
+
 
 use futures::StreamExt;
 use structopt::StructOpt;
 
-use log::{LevelFilter, debug, info};
-use simplelog::{SimpleLogger, Config as LogConfig};
+use log::{debug, info, LevelFilter};
+use simplelog::{Config as LogConfig, SimpleLogger};
 
 use vmouse::{Client, Command};
-
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]
 pub struct Options {
@@ -18,11 +16,11 @@ pub struct Options {
     pub command: Command,
 
     /// Socket for daemon connections
-    #[structopt(long, default_value="/var/run/vmouse.sock")]
+    #[structopt(long, default_value = "/var/run/vmouse.sock")]
     pub socket: String,
 
     /// Log verbosity
-    #[structopt(long, default_value="debug")]
+    #[structopt(long, default_value = "debug")]
     pub log_level: LevelFilter,
 }
 
