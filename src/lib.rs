@@ -10,7 +10,7 @@ use async_std::os::unix::net::UnixStream;
 use futures::stream::BoxStream;
 use futures::{AsyncRead, AsyncWriteExt, Sink, Stream};
 use structopt::StructOpt;
-use strum_macros::Display;
+use strum_macros::{Display, EnumVariantNames};
 use serde::{Serialize, Deserialize};
 
 use evdev_rs::{TimeVal, InputEvent, UInputDevice, UninitDevice, DeviceWrapper};
@@ -30,15 +30,49 @@ pub use axis::*;
 #[derive(serde::Serialize, serde::Deserialize)]
 
 pub enum Command {
+    /// Ping the vmouse daemon (vmoused)
     Ping,
+    /// Bind an event input to vmoused
     Bind{
         /// Device event name
         event: String,
     },
-    Ok,
+    /// Subscribe to events from vmoused
     Listen,
+
+    /// Fetch current state from vmoused
+    GetState,
+
+    /// Fetch current config from vmoused
+    GetConfig,
+
+    /// Enable or disable vmoused output (useful when changing configuration)
+    Enable {
+        #[structopt(long)]
+        enabled: bool
+    },
+
+    #[structopt(skip)]
+    Ok,
+
+    #[structopt(skip)]
     Failed,
+
+    /// Raw value update message
+    #[structopt(skip)]
     RawValue(AxisValue),
+
+    /// State update message
+    #[structopt(skip)]
+    State(AxisCollection<f32>),
+
+    /// Config update message
+    #[structopt(skip)]
+    Config(Config),
+
+    /// Signal disconnect for a client
+    #[structopt(skip)]
+    Disconnect,
 }
 
 
@@ -46,13 +80,14 @@ pub enum Command {
 pub type Config = axis::AxisCollection<AxisConfig>;
 
 impl Config {
+    /// Standard configuration for SpaceMouse
     pub fn standard() -> Self {
         Self { 
-            x: AxisConfig{map: Map::H, scale: 0.005, curve: Some(0.5)}, 
-            y: AxisConfig{map: Map::V, scale: 0.005, curve: Some(0.5)}, 
+            x: AxisConfig{map: Map::H, scale: 0.005, curve: 0.5, deadzone: 0.0}, 
+            y: AxisConfig{map: Map::V, scale: 0.005, curve: 0.5, deadzone: 0.0}, 
             z: Default::default(), 
-            rx: AxisConfig{map: Map::Y, scale: 0.2, curve: Some(1.0)},
-            ry: AxisConfig{map: Map::X, scale: -0.2, curve: Some(1.0)}, 
+            rx: AxisConfig{map: Map::Y, scale: 0.2, curve: 1.0, deadzone: 0.0},
+            ry: AxisConfig{map: Map::X, scale: -0.2, curve: 1.0, deadzone: 0.0}, 
             rz: Default::default(),
         }
     }
@@ -72,16 +107,12 @@ impl Config {
         };
 
         // Normalise input value (AXIS_MIN -> AXIS_MAX to -1.0 -> 1.0)
-        let mut v = e.value as f32 / AXIS_MAX as f32;
+        let r = e.value as f32 / AXIS_MAX as f32;
 
-        // Apply curve / scalar equation if available
-        // https://www.chiefdelphi.com/t/paper-joystick-sensitivity-gain-adjustment/107280
-        if let Some(c) = m.curve {
-            v = c * v.powi(3) + (1.0 - c) * v;
-        }
+        // Apply axis value transformation
+        let v = m.transform(r);
 
-        // Apply scaling if available
-        v *= m.scale;
+        trace!("Map event axis: {} val: {:04} (raw: {:04}", m.map, v, r);
                 
         // Return map and new value
         Some((m.map, v))
@@ -89,7 +120,7 @@ impl Config {
 }
 
 /// Axis configuration
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 
 pub struct AxisConfig {
@@ -97,10 +128,13 @@ pub struct AxisConfig {
     pub map: Map,
 
     /// Output axis sensitivity curve (0.0=x 1.0=x^3)
-    pub curve: Option<f32>,
+    pub curve: f32,
 
     /// Output axis scaling factor
     pub scale: f32,
+
+    /// Output axis deadzone
+    pub deadzone: f32,
 }
 
 impl Default for AxisConfig {
@@ -108,13 +142,44 @@ impl Default for AxisConfig {
         Self {
             scale: 0.5,
             map: Map::None,
-            curve: None,
+            curve: 0.0,
+            deadzone: 0.0,
         }
     }
 }
 
+impl AxisConfig {
+    /// Apply transformation to raw (-1.0 to 1.0) axis value
+    pub fn transform(&self, mut r: f32) -> f32 {
+        // Apply deadzones if available
+        if r > 0.0 {
+            if r < self.deadzone {
+                r = 0.0;
+            } else {
+                r = (r - self.deadzone) / ( 1.0 - self.deadzone);
+            }
+
+        } else if r < 0.0 {
+            if r > -self.deadzone {
+                r = 0.0;
+            } else {
+                r = (r + self.deadzone) / ( 1.0 - self.deadzone);
+            }
+        }
+
+        // Apply curve / scalar equation if available
+        // https://www.chiefdelphi.com/t/paper-joystick-sensitivity-gain-adjustment/107280
+        r = self.curve * r.powi(3) + (1.0 - self.curve) * r;
+
+        // Apply scaling if available
+        r *= self.scale;
+
+        r
+    }
+}
+
 /// Output axis function
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Display, EnumVariantNames)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum Map {
     /// Unmapped
@@ -128,6 +193,8 @@ pub enum Map {
     /// V axis (vertical scroll)
     V,
 }
+
+pub const MAPPINGS: &[Map] = &[ Map::None, Map::X, Map::Y, Map::H, Map::V ];
 
 
 impl Map {

@@ -1,17 +1,17 @@
 use std::{hash::Hash, ops::{Index, IndexMut}, sync::{Arc, Mutex}, time::Duration};
 
 use futures::{StreamExt, stream::BoxStream};
-use iced::{Application, Canvas, Column, Command, Container, Element, Length, PickList, Point, ProgressBar, Row, Settings, Size, Slider, Text, TextInput, Vector, pick_list, slider, text_input};
+use iced::{Application, Canvas, Column, Command, Container, Element, Length, PickList, Point, ProgressBar, Row, Settings, Size, Slider, Text, TextInput, Vector, pick_list, slider, text_input, alignment::{self, Horizontal}, Alignment};
 use iced::canvas::{self, Cache, LineCap, Path, Stroke};
-use iced_native::{Color, Widget, layout, renderer, subscription::Recipe, widget::{Button, button}};
+use iced_native::{Color, Widget, layout, renderer, subscription::Recipe, widget::{Button, button}, Renderer};
 
 use structopt::StructOpt;
-use strum_macros::Display;
+use strum::VariantNames;
 
 use log::{LevelFilter, debug, info, error};
 use simplelog::{SimpleLogger, Config as LogConfig};
 
-use vmouse::{AXIS, AXIS_LIN, AXIS_ROT, Axis, AxisCollection, Client};
+use vmouse::{AXIS, AXIS_LIN, AXIS_ROT, Axis, AxisCollection, Client, Config, Map, MAPPINGS};
 
 mod cg;
 use cg::CurveGraph;
@@ -42,16 +42,30 @@ async fn main() -> anyhow::Result<()> {
 
 struct App {
     values: AxisCollection<f32>,
-    scales: AxisCollection<f32>,
-    scale_slider: AxisCollection<slider::State>,
-    value_slider: AxisCollection<slider::State>,
+
+    scale_state: text_input::State,
+    scale_text: String,
+    apply_scale_state: button::State,
+
+    curve_slider: AxisCollection<slider::State>,
+    deadzone_slider: AxisCollection<slider::State>,
+
     cgs: AxisCollection<Arc<CurveGraph>>,
+
+    config: Config,
 
     pick_axis: pick_list::State<Axis>,
     axis: Axis,
 
+    pick_map: pick_list::State<Map>,
+
     socket_state: text_input::State,
     socket: String,
+
+    apply_state: button::State,
+    revert_state: button::State,
+    attach_state: button::State,
+    attached: bool,
 
     connect_state: button::State,
     
@@ -65,70 +79,158 @@ impl Application for App {
 
     fn new(_flags: Self::Flags) -> (Self, iced::Command<Self::Message>) {
         let socket = "/var/run/vmouse.sock".to_string();
+
+        let config = Config::standard();
+
         // TODO: commands to run setup go here
         (Self{
             values: Default::default(),
-            scales: AxisCollection::with_axis(|_| 0.5),
-            scale_slider: Default::default(),
-            value_slider: Default::default(),
-            cgs: AxisCollection::with_axis(|a| Arc::new(CurveGraph::new(a, 0.5, 0.0))),
+            
+            scale_state: Default::default(),
+            apply_scale_state: Default::default(),
+            scale_text: Default::default(),
 
-            pick_axis: Default::default(),
+            curve_slider: Default::default(),
+            deadzone_slider: Default::default(),
+
+            config: Config::standard(),
+
+            cgs: AxisCollection::with_axis(|a| Arc::new(CurveGraph::new(a, config[a].clone(), 0.0))),
+
             axis: Axis::X,
+            pick_axis: Default::default(),
+            pick_map: Default::default(),
 
             socket_state: Default::default(),
             socket: socket.clone(),
 
+            apply_state: Default::default(),
+            revert_state: Default::default(),
+            attach_state: Default::default(),
+            attached: true,
+
             connect_state: Default::default(),
             client: None,
-        }, Self::connect(socket.clone()))
+        }, iced::Command::batch(vec![
+            Self::connect(socket.clone())
+        ]))
     }
 
     fn title(&self) -> String {
         "VMouse GUI".to_string()
     }
 
-
+    // Handle events
     fn update(
         &mut self,
         message: Self::Message
     ) -> iced::Command<Self::Message> {
-        //TODO: update things
-        match message {
-            Message::ScaleChanged(a, s) => {
-                self.scales[a] = s;
-                self.cgs[a].set_scale(s);
+        
+        match (message, self.client.clone()) {
+            (Message::Connect, None) => {
+                return Self::connect(self.socket.clone());
             },
-            Message::ValueChanged(a, v) => {
+            (Message::Connected(client), _) => {
+                debug!("Received client, unpacking");
+                let c = client.lock().unwrap().take();
+                self.client = c.clone();
+
+                if let Some(c) = c {
+                    return Self::command(c, vmouse::Command::GetConfig);
+                }
+            },
+            (Message::Disconnect, Some(_)) => {
+                let _ = self.client.take();
+            }
+            (Message::ApplyConfig, Some(c)) => {
+                return Self::command(c, vmouse::Command::Config(self.config.clone()));
+            },
+            (Message::RevertConfig, Some(c)) => {
+                return Self::command(c, vmouse::Command::GetConfig);
+
+            },
+            (Message::Attach, Some(c)) => {
+                self.attached = true;
+                return Self::command(c, vmouse::Command::Enable{enabled: true});
+            },
+            (Message::Detach, Some(c)) => {
+                self.attached = false;
+                return Self::command(c, vmouse::Command::Enable{enabled: false});
+            }
+            (Message::ScaleChanged(_a, s), _) => {
+                // Update scale string
+                self.scale_text = s;
+            },
+            (Message::ApplyScale, _) => {
+                // Update scale if value is valid
+                let v = match self.scale_text.parse::<f32>() {
+                    Ok(v) => v,
+                    Err(_e) => {
+                        error!("Non-numeric scale value: {}", self.scale_text);
+                        return iced::Command::none();
+                    }
+                };
+
+                if v > -10.0 && v < 10.0 {
+                    info!("Applying scale {:0.4} for axis: {}", v, self.axis);
+
+                    self.config[self.axis].scale = v;
+                    self.cgs[self.axis].set_config(self.config[self.axis].clone());
+
+                } else {
+                    error!("Scale value: {:0.4} exceeds maximum range", v);
+                }
+            }
+            (Message::MappingChanged(m), _) => {
+                self.config[self.axis].map = m;
+            }
+            (Message::CurveChanged(a, c), _) => {
+                self.config[a].curve = c;
+                self.cgs[a].set_config(self.config[a].clone());
+            },
+            (Message::DeadzoneChanged(a, d), _) => {
+                self.config[a].deadzone = d;
+                self.cgs[a].set_config(self.config[a].clone());
+            },
+            (Message::ValueChanged(a, v), _) => {
                 self.values[a] = v;
                 self.cgs[a].set_value(v);
             },
-            Message::SelectAxis(a) => {
+            (Message::SelectAxis(a), _) => {
                 self.axis = a;
+
+                self.scale_text = format!("{:0.4}", self.config[a].scale);
             },
-            Message::SocketChanged(socket) => {
+            (Message::SocketChanged(socket), _) => {
                 self.socket = socket;
             },
-            Message::Connect => {
-                let socket = self.socket.clone();
-                return Self::connect(self.socket.clone());
+
+            (Message::Command(vmouse::Command::Config(c)), _) => {
+                debug!("Received config: {:?}", c);
+
+                self.config = c;
+
+                // Update curve graphs
+                for a in AXIS {
+                    self.cgs[*a].set_config(self.config[*a].clone());
+                }
+
+                self.scale_text = format!("{:0.4}", self.config[self.axis].scale);
+            }
+            (Message::Command(vmouse::Command::State(s)), _) => {
+                // Update state map
+                self.values = s;
+
+                // Update curve graphs
+                for a in AXIS {
+                    self.cgs[*a].set_value(s[*a]);
+                }
             },
-            Message::Connected(client) => {
-                debug!("Received client, unpacking");
-                let c = client.lock().unwrap().take();
-                self.client = c;
-            },
-            Message::Command(vmouse::Command::RawValue(v)) => {
-                self.values[v.a] = v.v;
-                self.cgs[v.a].set_value(v.v);
-            },
-            Message::Command(cmd) => {
+            (Message::Command(cmd), _) => {
                 debug!("Received command: {:?}", cmd);         
             },
             _ => (),
         }
-
-        // TODO: Command::perform to call futures
 
         Command::none()
     }
@@ -173,37 +275,91 @@ impl Application for App {
 
         let axis = self.axis;
 
-        let column_ctrl = Column::new().padding(10)
+        let mut connect_ctl = Row::new().spacing(10).align_items(Alignment::Center)
+        .push(TextInput::new(&mut self.socket_state, "socket", &self.socket, Message::SocketChanged).width(Length::FillPortion(2)));
+        if self.client.is_none() {
+            connect_ctl = connect_ctl.push(Button::new(&mut self.connect_state, Text::new("connect").horizontal_alignment(Horizontal::Center)).on_press(Message::Connect).width(Length::FillPortion(1)))
+        } else {
+            connect_ctl = connect_ctl.push(Button::new(&mut self.connect_state, Text::new("disconnect").horizontal_alignment(Horizontal::Center)).on_press(Message::Disconnect).width(Length::FillPortion(1)))
+        }
+
+        let mut config_ctl = Row::new().spacing(10).align_items(Alignment::Center)
+            .push(Button::new(&mut self.apply_state, Text::new("apply").horizontal_alignment(Horizontal::Center)).on_press(Message::ApplyConfig).width(Length::FillPortion(1)))
+            .push(Button::new(&mut self.revert_state, Text::new("revert").horizontal_alignment(Horizontal::Center)).on_press(Message::RevertConfig).width(Length::FillPortion(1)));
+        if !self.attached {
+            config_ctl = config_ctl.push(Button::new(&mut self.attach_state, Text::new("attach").horizontal_alignment(Horizontal::Center)).on_press(Message::Attach).width(Length::FillPortion(1)))
+        } else {
+            config_ctl = config_ctl.push(Button::new(&mut self.attach_state, Text::new("detach").horizontal_alignment(Horizontal::Center)).on_press(Message::Detach).width(Length::FillPortion(1)))
+        }
+
+        let column_ctrl = Column::new().padding(10).spacing(10)
         .height(Length::Fill).width(Length::FillPortion(2))
-        .push(ProgressBar::new(0.0..=1.0, self.scales[self.axis]))
-        .push(
-            Slider::new(
-                &mut self.scale_slider[axis],
-                0.0..=1.0,
-                self.scales[axis],
-                move |x| Message::ScaleChanged(axis, x),
-            )
-            .step(0.01),
-        )
-        .push(ProgressBar::new(-1.0..=1.0, self.values[axis]))
-        .push(
-            Slider::new(
-                &mut self.value_slider[axis],
-                -1.0..=1.0,
-                self.values[self.axis],
-                move |x| Message::ValueChanged(axis, x),
-            )
-            .step(0.01),
-        )
+        // Axis selection
+        .push(Text::new("Axis:").vertical_alignment(alignment::Vertical::Center))
         .push(PickList::new(
             &mut self.pick_axis,
             AXIS,
             Some(self.axis),
             Message::SelectAxis,
-        ))
-        .push(TextInput::new(&mut self.socket_state, "socket", &self.socket, Message::SocketChanged))
-        .push(Button::new(&mut self.connect_state, Text::new("connect")).on_press(Message::Connect));
-    
+        ).width(Length::Fill))
+        
+        // Current value display
+        .push(Text::new("Value:").vertical_alignment(alignment::Vertical::Center))
+        .push(ProgressBar::new(-1.0..=1.0, self.values[axis]))
+        .push(Row::new().height(Length::Units(10)))
+
+        // Mapping configuration
+        .push(Text::new("Mapping:").vertical_alignment(alignment::Vertical::Center))
+        .push(PickList::new(
+            &mut self.pick_map,
+            MAPPINGS,
+            Some(self.config[self.axis].map),
+            Message::MappingChanged,
+        ).width(Length::Fill))
+        
+
+        // Scale configuration
+        .push(Text::new("Scale:").vertical_alignment(alignment::Vertical::Center))
+        .push(Row::new().spacing(10).align_items(Alignment::Center)
+            .push(TextInput::new(&mut self.scale_state, "scale", &self.scale_text, move |s| Message::ScaleChanged(axis, s) ))
+            .push(Button::new(&mut self.apply_scale_state, Text::new("apply")).on_press(Message::ApplyScale))
+        )
+
+        // Curve configuration
+        .push(Text::new("Curve:").vertical_alignment(alignment::Vertical::Center))
+        .push(ProgressBar::new(0.0..=1.0, self.config[axis].curve))
+        .push(
+            Slider::new(
+                &mut self.curve_slider[axis],
+                0.0..=1.0,
+                self.config[axis].curve,
+                move |x| Message::CurveChanged(axis, x),
+            )
+            .step(0.01),
+        )
+
+        // Deadzone configuration
+        .push(Text::new("Deadzone:").vertical_alignment(alignment::Vertical::Center))
+        .push(ProgressBar::new(0.0..=1.0, self.config[axis].deadzone))
+        .push(
+            Slider::new(
+                &mut self.deadzone_slider[axis],
+                0.0..=1.0,
+                self.config[axis].deadzone,
+                move |d| Message::DeadzoneChanged(axis, d),
+            )
+            .step(0.01),
+        )
+
+        .push(Row::new().height(Length::Fill))
+
+
+        .push(Text::new("Control:").vertical_alignment(alignment::Vertical::Center))
+        .push(config_ctl)
+
+        // Daemon connection
+        .push(Text::new("Socket:").vertical_alignment(alignment::Vertical::Center))
+        .push(connect_ctl);
         Row::new().padding(10)
             .push(column_lin)
             .push(column_rot)
@@ -211,6 +367,7 @@ impl Application for App {
             .into()
     }
 }
+
 
 impl App {
     fn connect(socket: String) -> Command<Message> {
@@ -235,6 +392,21 @@ impl App {
         })
     }
 
+    fn command(mut client: Client, cmd: vmouse::Command) -> Command<Message> {
+        Command::perform(async move {
+            debug!("Issuing config get request");
+            client.send(cmd).await?;
+            Ok(())
+        }, |r: Result<(), anyhow::Error>| {
+            match r {
+                Ok(_c) => Message::Tick,
+                Err(e) => {
+                    error!("Connection failed: {:?}", e);
+                    Message::Tick
+                }
+            }
+        })
+    }
 }
 
 struct Idk {

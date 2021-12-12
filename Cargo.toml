@@ -13,6 +13,7 @@ depends = "libevdev2"
 assets = [
     ["target/release/vmoused",   "/usr/local/bin/vmoused",   "0755"],
     ["target/release/vmousectl", "/usr/local/bin/vmousectl", "0755"],
+    ["target/release/vmouseui",  "/usr/local/bin/vmouseui", "0755"],
     ["vmouse.toml",     "/etc/vmouse/vmouse.toml",           "0644"],
     ["99-vmouse.rules", "/etc/udev/99-vmouse.rules",         "0644"],
     ["vmouse.service", "/lib/systemd/system/vmouse.service", "0644"],

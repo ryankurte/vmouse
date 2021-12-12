@@ -8,25 +8,29 @@ use strum_macros::{Display, EnumString, EnumVariantNames};
 
 use crate::AXIS_MAX;
 
-
+/// Axis kind enumeration
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, EnumString, Display, EnumVariantNames)]
 #[derive(Serialize, Deserialize)]
 pub enum Axis {
     X, Y, Z, RX, RY, RZ
 }
 
+/// List of axes (useful for iteration)
 pub const AXIS: &[Axis] = &[
     Axis::X, Axis::Y, Axis::Z, Axis::RX, Axis::RY, Axis::RZ
 ];
 
+/// List of linear axes (useful for iteration)
 pub const AXIS_LIN: &[Axis] = &[
     Axis::X, Axis::Y, Axis::Z,
 ];
 
+/// List of rotational axes (useful for iteration)
 pub const AXIS_ROT: &[Axis] = &[
     Axis::RX, Axis::RY, Axis::RZ
 ];
 
+/// Helper to convert an EventCode into an [`Axis`] enumeration
 impl TryFrom<EventCode> for Axis {
     type Error = ();
 
@@ -46,6 +50,7 @@ impl TryFrom<EventCode> for Axis {
     }
 }
 
+/// Axis value type, contains [`Axis`] kind and normalised (-1.0 to 1.0) value
 #[derive(Copy, Clone, PartialEq, Debug, StructOpt, Serialize, Deserialize)]
 pub struct AxisValue {
     /// Axis associated with value
@@ -54,6 +59,7 @@ pub struct AxisValue {
     pub v: f32,
 }
 
+/// Helper to create an [`AxisValue`] from an evdev [`InputEvent`]
 impl TryFrom<InputEvent> for AxisValue {
     type Error = ();
 
@@ -61,11 +67,11 @@ impl TryFrom<InputEvent> for AxisValue {
     fn try_from(evt: InputEvent) -> Result<Self, Self::Error> {
         let a = Axis::try_from(evt.event_code)?;
         let v  = evt.value as f32 / AXIS_MAX as f32;
-        Ok(Self{ a, v})
+        Ok(Self{ a, v })
     }
 }
 
-/// Generic collection of axis
+/// Generic collection of axes with associated values of type T
 #[derive(Copy, Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct AxisCollection<T> {
     pub x: T,

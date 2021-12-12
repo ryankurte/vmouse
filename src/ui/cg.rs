@@ -4,7 +4,7 @@ use iced::{Color, Element, Length, Point, Rectangle, Size, Vector};
 use iced::canvas::{Cache, Cursor, Geometry, LineCap, Path, Program, Stroke, Text};
 use iced_native::{Renderer, Widget, layout, renderer};
 
-use vmouse::{Axis, AXIS_LIN, AXIS_ROT};
+use vmouse::{Axis, AXIS_LIN, AXIS_ROT, AxisConfig};
 
 use crate::message::Message;
 
@@ -12,43 +12,47 @@ use crate::message::Message;
 /// CurveGraph displays an axis map and value
 #[derive(Debug)]
 pub struct CurveGraph {
-    pub a: Axis,
+    pub axis: Axis,
     i: Arc<Mutex<CurveGraphInner>>,
 }
 
 #[derive(Debug)]
 struct CurveGraphInner {
-    s: f32,
-    v: f32,
-    c: Cache,
+    config: AxisConfig,
+    value: f32,
+    cache: Cache,
 }
 
 const N: isize = 100;
 
 impl CurveGraph {
-    pub fn new(a: Axis, s: f32, v: f32) -> Self {
+    pub fn new(axis: Axis, config: AxisConfig, value: f32) -> Self {
         Self {
-            a,
+            axis,
             i: Arc::new(Mutex::new(CurveGraphInner{
-                s, v, c: Cache::new(),
+                config, value, cache: Cache::new(),
             })),
         }
     }
 
-    pub fn set_scale(&self, s: f32) {
+    pub fn set_config(&self, c: AxisConfig) {
         let mut i = self.i.lock().unwrap();
-        if i.s != s {
-            i.c.clear();
+
+        // Clear cache on change
+        if i.config != c {
+            i.cache.clear();
         }
-        i.s = s;
+
+        // Update config
+        i.config = c;
     }
 
     pub fn set_value(&self, v: f32) {
         let mut i = self.i.lock().unwrap();
-        if i.v != v {
-            i.c.clear();
+        if i.value != v {
+            i.cache.clear();
         }
-        i.v = v;
+        i.value = v;
     }
 }
 
@@ -58,7 +62,10 @@ impl Program<Message> for Arc<CurveGraph> {
     fn draw(&self, bounds: Rectangle, _cursor: Cursor) -> Vec<Geometry> {
         let inner = self.i.lock().unwrap();
 
-        let g = inner.c.draw(bounds.size(), |f| {
+        let mut config = inner.config.clone();
+        config.scale = 1.0;
+
+        let g = inner.cache.draw(bounds.size(), |f| {
 
             let center = f.center();
             let b = bounds.size();
@@ -80,7 +87,7 @@ impl Program<Message> for Arc<CurveGraph> {
 
             // Title
             let t = Text{
-                content: self.a.to_string(),
+                content: self.axis.to_string(),
                 position: Point::new(10.0, 10.0),
                 size: 25.0,
                 ..Default::default()
@@ -110,7 +117,7 @@ impl Program<Message> for Arc<CurveGraph> {
 
                 for i in -N..N+1 {
                     let x = i as f32 / N as f32;
-                    let y = inner.s * x.powi(3) + (1.0 - inner.s) * x;
+                    let y = config.transform(x);
 
                     let p = Point{ x: x * bx, y: y * -by };
 
@@ -129,11 +136,9 @@ impl Program<Message> for Arc<CurveGraph> {
                 f.stroke(&p, thin_stroke);
             });
 
-
-
             // Center marker
-            let y = inner.s * inner.v.powi(3) + (1.0 - inner.s) * inner.v;
-            let p = Point{ x: inner.v * bx, y: y * -by};
+            let y = config.transform(inner.value);
+            let p = Point{ x: inner.value * bx, y: y * -by};
             let circle = Path::circle(p, 5.0);
 
             f.with_save(|f| {
@@ -192,9 +197,10 @@ where
 
         let i = self.i.lock().unwrap();
 
-        self.a.hash(state);
-        i.v.to_bits().hash(state);
-        i.s.to_bits().hash(state);
+        self.axis.hash(state);
+        i.value.to_bits().hash(state);
+        i.config.scale.to_bits().hash(state);
+        i.config.curve.to_bits().hash(state);
     }
 }
 
