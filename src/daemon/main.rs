@@ -1,8 +1,5 @@
 use std::collections::HashMap;
 
-
-
-
 use std::fs::File;
 
 use std::io::{ErrorKind};
@@ -18,16 +15,20 @@ use async_std::{io::ReadExt, io::WriteExt};
 
 use structopt::StructOpt;
 
-use log::{debug, error, info, trace, LevelFilter};
+use log::{debug, warn, error, info, trace, LevelFilter};
 use simplelog::{Config as LogConfig, SimpleLogger};
 
-use vmouse::{AxisCollection, AxisValue, Command, Config};
+use vmouse::{AxisCollection, AxisValue, Command, Config, UsbDevice};
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]
 pub struct Options {
     /// Socket for daemon connections
     #[structopt(long, default_value = "/var/run/vmouse.sock")]
     pub socket: String,
+
+    /// Configuration file
+    #[structopt(long, default_value = "/etc/vmouse/vmouse.toml")]
+    pub config: String,
 
     /// Log verbosity
     #[structopt(long, default_value = "debug")]
@@ -44,7 +45,17 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting vmousectl");
 
-    let config = Config::standard();
+    let config = Config::default();
+
+    // Attempt to load configuration
+    match std::fs::read_to_string(&opts.config) {
+        Ok(v) => {
+
+        },
+        Err(e) => {
+            warn!("Failed to read config '{}': {:?}", opts.config, e);
+        },
+    }
 
     debug!("Config: {:?}", config);
 
@@ -94,17 +105,17 @@ async fn main() -> anyhow::Result<()> {
 
                     // Map input to output event
                     // TODO: multi-device and reconfigurable mappings?
-                    if let Some((map, val)) = d.config.map(&evt) {
+                    if let Some((map, val)) = d.config.map(&evt.0, &evt.1) {
 
                         // If output is enabled, write to virtual device
                         if d.enabled {
-                            map.event(&v, evt.time, val)?;
+                            map.event(&v, evt.1.time, val)?;
                         }
                     }
 
                     // Update internal state
                     // Convert input event to axis value
-                    if let Ok(v) = AxisValue::try_from(evt) {
+                    if let Ok(v) = AxisValue::try_from(evt.1) {
                         d.state[v.a] = v.v;
                     };
                     d.changed = true;
@@ -149,7 +160,7 @@ pub struct Daemon {
     id: u32,
     config: Config,
     state: AxisCollection<f32>,
-    evt_tx: Sender<InputEvent>,
+    evt_tx: Sender<(UsbDevice, InputEvent)>,
     enabled: bool,
 
     clients: HashMap<u32, ClientHandle>,
@@ -160,14 +171,14 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    fn new(config: Config, evt_tx: Sender<InputEvent>, tick_tx: Sender<()>) -> Self {
+    fn new(config: Config, evt_tx: Sender<(UsbDevice, InputEvent)>, tick_tx: Sender<()>) -> Self {
         Self {
             id: 0,
             config,
             enabled: true,
             evt_tx,
             tick_tx,
-            state: Default::default(),
+            state: AxisCollection::with_axis(|_| Default::default()),
             clients: Default::default(),
             changed: false,
             update_task: None,
@@ -286,6 +297,11 @@ impl Daemon {
             );
         }
 
+        let h = UsbDevice{
+            vid: d.vendor_id(),
+            pid: d.product_id(),
+        };
+
         // Wrap device in async adapter
         let a = smol::Async::new(d)?;
 
@@ -296,7 +312,7 @@ impl Daemon {
                     // Read on incoming events
                     r = a.read_with(|d| d.next_event(ReadFlag::NORMAL)).fuse() => {
                         match r {
-                            Ok((_status, evt)) => evt_tx.send(evt).await?,
+                            Ok((_status, evt)) => evt_tx.send((h, evt)).await?,
                             Err(e) => break Err(e.into()),
                         }
                     },
@@ -333,11 +349,11 @@ impl Daemon {
                 Some(Command::Ok)
             }
             Command::GetState => Some(Command::State(self.state)),
-            Command::GetConfig => Some(Command::Config(self.config)),
+            Command::GetConfig => Some(Command::Config(self.config.clone())),
             Command::Config(c) => {
                 debug!("Updating config: {:?}", c);
 
-                self.config = *c;
+                self.config = c.clone();
 
                 Some(Command::Ok)
             }

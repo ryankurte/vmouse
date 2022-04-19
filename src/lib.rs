@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::os::unix::prelude::AsRawFd;
 use std::pin::Pin;
 use std::task::Poll;
@@ -8,6 +9,7 @@ use async_std::os::unix::net::UnixStream;
 
 use futures::{AsyncRead, AsyncWriteExt, Stream};
 
+use serde::{Deserialize, Serialize};
 use structopt::StructOpt;
 use strum_macros::{Display, EnumVariantNames};
 
@@ -70,52 +72,70 @@ pub enum Command {
 }
 
 /// Mouse re-mapping configuration
-pub type Config = axis::AxisCollection<AxisConfig>;
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Config {
+    pub devices: HashMap<UsbDevice, axis::AxisCollection<AxisConfig>>,
+    pub default: axis::AxisCollection<AxisConfig>,
+}
 
-impl Config {
-    /// Standard configuration for SpaceMouse
-    pub fn standard() -> Self {
+/// Device descriptor object
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
+pub struct UsbDevice {
+    pub vid: u16,
+    pub pid: u16,
+}
+
+impl Default for Config {
+    fn default() -> Self {
         Self {
-            x: AxisConfig {
-                map: Map::H,
-                scale: 0.005,
-                curve: 0.5,
-                deadzone: 0.0,
-            },
-            y: AxisConfig {
-                map: Map::V,
-                scale: 0.005,
-                curve: 0.5,
-                deadzone: 0.0,
-            },
-            z: Default::default(),
-            rx: AxisConfig {
-                map: Map::Y,
-                scale: 0.2,
-                curve: 1.0,
-                deadzone: 0.0,
-            },
-            ry: AxisConfig {
-                map: Map::X,
-                scale: -0.2,
-                curve: 1.0,
-                deadzone: 0.0,
-            },
-            rz: Default::default(),
+            devices: HashMap::new(),
+            default: axis::AxisCollection{
+                x: AxisConfig {
+                    map: Map::H,
+                    scale: 0.005,
+                    curve: 0.5,
+                    deadzone: 0.0,
+                },
+                y: AxisConfig {
+                    map: Map::V,
+                    scale: 0.005,
+                    curve: 0.5,
+                    deadzone: 0.0,
+                },
+                z: Default::default(),
+                rx: AxisConfig {
+                    map: Map::Y,
+                    scale: 0.2,
+                    curve: 1.0,
+                    deadzone: 0.0,
+                },
+                ry: AxisConfig {
+                    map: Map::X,
+                    scale: -0.2,
+                    curve: 1.0,
+                    deadzone: 0.0,
+                },
+                rz: Default::default(),
+            }
         }
     }
 }
 
 impl Config {
-    pub fn map(&self, e: &InputEvent) -> Option<(Map, f32)> {
+    pub fn map(&self, d: &UsbDevice, e: &InputEvent) -> Option<(Map, f32)> {
+        let axes = match self.devices.get(d) {
+            Some(d) => d,
+            None => &self.default,
+        };
+
         // Match event codes to configuration
         let m = match e.event_code {
-            EventCode::EV_REL(EV_REL::REL_X) => self.x,
-            EventCode::EV_REL(EV_REL::REL_Y) => self.y,
-            EventCode::EV_REL(EV_REL::REL_Z) => self.z,
-            EventCode::EV_REL(EV_REL::REL_RX) => self.rx,
-            EventCode::EV_REL(EV_REL::REL_RY) => self.ry,
-            EventCode::EV_REL(EV_REL::REL_RZ) => self.rz,
+            EventCode::EV_REL(EV_REL::REL_X) => axes.x,
+            EventCode::EV_REL(EV_REL::REL_Y) => axes.y,
+            EventCode::EV_REL(EV_REL::REL_Z) => axes.z,
+            EventCode::EV_REL(EV_REL::REL_RX) => axes.rx,
+            EventCode::EV_REL(EV_REL::REL_RY) => axes.ry,
+            EventCode::EV_REL(EV_REL::REL_RZ) => axes.rz,
             _ => return None,
         };
 

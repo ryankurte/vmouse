@@ -87,24 +87,24 @@ impl Application for App {
     fn new(_flags: Self::Flags) -> (Self, iced::Command<Self::Message>) {
         let socket = "/var/run/vmouse.sock".to_string();
 
-        let config = Config::standard();
+        let config = Config::default();
 
         // TODO: commands to run setup go here
         (
             Self {
-                values: Default::default(),
+                values: AxisCollection::with_axis(|_| Default::default()),
 
                 scale_state: Default::default(),
                 apply_scale_state: Default::default(),
                 scale_text: Default::default(),
 
-                curve_slider: Default::default(),
-                deadzone_slider: Default::default(),
+                curve_slider: AxisCollection::with_axis(|_| Default::default()),
+                deadzone_slider: AxisCollection::with_axis(|_| Default::default()),
 
-                config: Config::standard(),
+                config: Config::default(),
 
                 cgs: AxisCollection::with_axis(|a| {
-                    Arc::new(CurveGraph::new(a, config[a], 0.0))
+                    Arc::new(CurveGraph::new(a, config.default[a], 0.0))
                 }),
 
                 axis: Axis::X,
@@ -149,7 +149,7 @@ impl Application for App {
                 let _ = self.client.take();
             }
             (Message::ApplyConfig, Some(c)) => {
-                return Self::command(c, vmouse::Command::Config(self.config));
+                return Self::command(c, vmouse::Command::Config(self.config.clone()));
             }
             (Message::RevertConfig, Some(c)) => {
                 return Self::command(c, vmouse::Command::GetConfig);
@@ -179,22 +179,22 @@ impl Application for App {
                 if v > -10.0 && v < 10.0 {
                     info!("Applying scale {:0.4} for axis: {}", v, self.axis);
 
-                    self.config[self.axis].scale = v;
-                    self.cgs[self.axis].set_config(self.config[self.axis]);
+                    self.config.default[self.axis].scale = v;
+                    self.cgs[self.axis].set_config(self.config.default[self.axis]);
                 } else {
                     error!("Scale value: {:0.4} exceeds maximum range", v);
                 }
             }
             (Message::MappingChanged(m), _) => {
-                self.config[self.axis].map = m;
+                self.config.default[self.axis].map = m;
             }
             (Message::CurveChanged(a, c), _) => {
-                self.config[a].curve = c;
-                self.cgs[a].set_config(self.config[a]);
+                self.config.default[a].curve = c;
+                self.cgs[a].set_config(self.config.default[a]);
             }
             (Message::DeadzoneChanged(a, d), _) => {
-                self.config[a].deadzone = d;
-                self.cgs[a].set_config(self.config[a]);
+                self.config.default[a].deadzone = d;
+                self.cgs[a].set_config(self.config.default[a]);
             }
             (Message::ValueChanged(a, v), _) => {
                 self.values[a] = v;
@@ -203,7 +203,7 @@ impl Application for App {
             (Message::SelectAxis(a), _) => {
                 self.axis = a;
 
-                self.scale_text = format!("{:0.4}", self.config[a].scale);
+                self.scale_text = format!("{:0.4}", self.config.default[a].scale);
             }
             (Message::SocketChanged(socket), _) => {
                 self.socket = socket;
@@ -216,10 +216,10 @@ impl Application for App {
 
                 // Update curve graphs
                 for a in AXIS {
-                    self.cgs[*a].set_config(self.config[*a]);
+                    self.cgs[*a].set_config(self.config.default[*a]);
                 }
 
-                self.scale_text = format!("{:0.4}", self.config[self.axis].scale);
+                self.scale_text = format!("{:0.4}", self.config.default[self.axis].scale);
             }
             (Message::Command(vmouse::Command::State(s)), _) => {
                 // Update state map
@@ -378,7 +378,7 @@ impl Application for App {
                 PickList::new(
                     &mut self.pick_map,
                     MAPPINGS,
-                    Some(self.config[self.axis].map),
+                    Some(self.config.default[self.axis].map),
                     Message::MappingChanged,
                 )
                 .width(Length::Fill),
@@ -402,24 +402,24 @@ impl Application for App {
             )
             // Curve configuration
             .push(Text::new("Curve:").vertical_alignment(alignment::Vertical::Center))
-            .push(ProgressBar::new(0.0..=1.0, self.config[axis].curve))
+            .push(ProgressBar::new(0.0..=1.0, self.config.default[axis].curve))
             .push(
                 Slider::new(
                     &mut self.curve_slider[axis],
                     0.0..=1.0,
-                    self.config[axis].curve,
+                    self.config.default[axis].curve,
                     move |x| Message::CurveChanged(axis, x),
                 )
                 .step(0.01),
             )
             // Deadzone configuration
             .push(Text::new("Deadzone:").vertical_alignment(alignment::Vertical::Center))
-            .push(ProgressBar::new(0.0..=1.0, self.config[axis].deadzone))
+            .push(ProgressBar::new(0.0..=1.0, self.config.default[axis].deadzone))
             .push(
                 Slider::new(
                     &mut self.deadzone_slider[axis],
                     0.0..=1.0,
-                    self.config[axis].deadzone,
+                    self.config.default[axis].deadzone,
                     move |d| Message::DeadzoneChanged(axis, d),
                 )
                 .step(0.01),
