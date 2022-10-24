@@ -85,12 +85,19 @@ impl TryFrom<InputEvent> for AxisValue {
 
 /// Generic collection of axes with associated values of type T
 #[derive(Copy, Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AxisCollection<T> {
+    #[serde(default)]
     pub x: T,
+    #[serde(default)]
     pub y: T,
+    #[serde(default)]
     pub z: T,
+    #[serde(default)]
     pub rx: T,
+    #[serde(default)]
     pub ry: T,
+    #[serde(default)]
     pub rz: T,
 }
 

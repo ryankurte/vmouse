@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use std::fs::File;
+use std::fs::{File, read_to_string};
 
 use std::io::{ErrorKind};
 use std::time::Duration;
@@ -18,7 +18,7 @@ use structopt::StructOpt;
 use log::{debug, warn, error, info, trace, LevelFilter};
 use simplelog::{Config as LogConfig, SimpleLogger};
 
-use vmouse::{AxisCollection, AxisValue, Command, Config, UsbDevice};
+use vmouse::{AxisCollection, AxisValue, Command, Config, UsbDevice, ConfigFile, DeviceConfig};
 
 #[derive(Clone, PartialEq, Debug, StructOpt)]
 pub struct Options {
@@ -43,19 +43,34 @@ async fn main() -> anyhow::Result<()> {
     // Setup logging
     let _ = SimpleLogger::init(opts.log_level, LogConfig::default());
 
-    info!("Starting vmousectl");
+    info!("Starting vmouse daemon");
 
-    let config = Config::default();
+    debug!("Loading config: '{}'", opts.config);
 
-    // Attempt to load configuration
-    match std::fs::read_to_string(&opts.config) {
-        Ok(v) => {
+    let mut config = Config::default();
+
+    // Load configuration file
+    match read_to_string(&opts.config).map(|s| toml::from_str::<ConfigFile>(&s) ) {
+        Ok(Ok(v)) => {
+            // Load devices from config
+            for e in v.devices {
+                let d = UsbDevice{ vid: e.vid, pid: e.pid, name: None }; 
+
+                // TODO: load axes
+
+                config.devices.insert(d, Default::default());
+            }
 
         },
+        // Read file, parsing failed
+        Ok(Err(e)) => {
+            warn!("Failed to parse config file '{}': {:?}, using defaults", opts.config, e);
+        },
+        // Read failed
         Err(e) => {
-            warn!("Failed to read config '{}': {:?}", opts.config, e);
+            warn!("Failed to read config file: '{}': {:?}, using defaults", opts.config, e);
         },
-    }
+    };
 
     debug!("Config: {:?}", config);
 
@@ -70,7 +85,9 @@ async fn main() -> anyhow::Result<()> {
     let listener = UnixListener::bind(&opts.socket).await?;
     let mut incoming = listener.incoming().fuse();
 
-    let mut d = Daemon::new(config, evt_tx, tick_tx);
+    debug!("Starting daemon");
+
+    let mut d = Daemon::new(config, opts.config.clone(), evt_tx, tick_tx);
 
     // Setup virtual device
     let v = vmouse::virtual_device()?;
@@ -159,6 +176,7 @@ async fn main() -> anyhow::Result<()> {
 pub struct Daemon {
     id: u32,
     config: Config,
+    config_file: String,
     state: AxisCollection<f32>,
     evt_tx: Sender<(UsbDevice, InputEvent)>,
     enabled: bool,
@@ -171,10 +189,11 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    fn new(config: Config, evt_tx: Sender<(UsbDevice, InputEvent)>, tick_tx: Sender<()>) -> Self {
+    fn new(config: Config, config_file: String, evt_tx: Sender<(UsbDevice, InputEvent)>, tick_tx: Sender<()>) -> Self {
         Self {
             id: 0,
             config,
+            config_file,
             enabled: true,
             evt_tx,
             tick_tx,
@@ -298,9 +317,12 @@ impl Daemon {
         }
 
         let h = UsbDevice{
+            name: d.name().map(|v| v.to_string() ),
             vid: d.vendor_id(),
             pid: d.product_id(),
         };
+
+        self.config.devices.insert(h.clone(), Default::default());
 
         // Wrap device in async adapter
         let a = smol::Async::new(d)?;
@@ -312,7 +334,7 @@ impl Daemon {
                     // Read on incoming events
                     r = a.read_with(|d| d.next_event(ReadFlag::NORMAL)).fuse() => {
                         match r {
-                            Ok((_status, evt)) => evt_tx.send((h, evt)).await?,
+                            Ok((_status, evt)) => evt_tx.send((h.clone(), evt)).await?,
                             Err(e) => break Err(e.into()),
                         }
                     },
@@ -349,11 +371,35 @@ impl Daemon {
                 Some(Command::Ok)
             }
             Command::GetState => Some(Command::State(self.state)),
-            Command::GetConfig => Some(Command::Config(self.config.clone())),
-            Command::Config(c) => {
+            Command::GetConfig => Some(Command::SetConfig(self.config.clone())),
+            Command::SetConfig(c) => {
                 debug!("Updating config: {:?}", c);
 
                 self.config = c.clone();
+
+                Some(Command::Ok)
+            },
+            Command::WriteConfig => {
+                info!("Writing updated config to: {}", self.config_file);
+
+                let c = ConfigFile{
+                    devices: self.config.devices.iter().map(|v| DeviceConfig{ vid: v.0.vid, pid: v.0.pid, axes: v.1.clone() }).collect()
+                };
+
+                let s = match toml::to_string_pretty(&c) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("Failed to encode config: {:?}", e);
+                        return Ok(Some(Command::Failed))
+                    }
+                };
+
+                if let Err(e) = std::fs::write(&self.config_file, s) {
+                    error!("Failed to write config file '{}': {:?}", self.config_file, e);
+                    return Ok(Some(Command::Failed))
+                }
+
+                info!("Config updated!");
 
                 Some(Command::Ok)
             }

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::os::unix::prelude::AsRawFd;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::task::Poll;
 
 
@@ -11,7 +12,7 @@ use futures::{AsyncRead, AsyncWriteExt, Stream};
 
 use serde::{Deserialize, Serialize};
 use structopt::StructOpt;
-use strum_macros::{Display, EnumVariantNames};
+use strum_macros::{Display, EnumVariantNames, EnumString};
 
 use evdev_rs::enums::{BusType, EventCode, EV_REL, EV_SYN};
 use evdev_rs::{DeviceWrapper, InputEvent, TimeVal, UInputDevice, UninitDevice};
@@ -62,9 +63,12 @@ pub enum Command {
     #[structopt(skip)]
     State(AxisCollection<f32>),
 
-    /// Config update message
+    /// Send updated config to vmoused
     #[structopt(skip)]
-    Config(Config),
+    SetConfig(Config),
+
+    /// Write updated config to configured file
+    WriteConfig,
 
     /// Signal disconnect for a client
     #[structopt(skip)]
@@ -74,15 +78,64 @@ pub enum Command {
 /// Mouse re-mapping configuration
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub devices: HashMap<UsbDevice, axis::AxisCollection<AxisConfig>>,
+
+    #[serde(default)]
     pub default: axis::AxisCollection<AxisConfig>,
 }
 
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct ConfigFile {
+    pub devices: Vec<DeviceConfig>,
+}
+
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct DeviceConfig {
+    pub vid: u16,
+    pub pid: u16,
+
+    #[serde(flatten)]
+    pub axes: axis::AxisCollection<AxisConfig>,
+}
+
 /// Device descriptor object
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
 pub struct UsbDevice {
     pub vid: u16,
     pub pid: u16,
+    pub name: Option<String>,
+}
+
+impl ToString for UsbDevice {
+    fn to_string(&self) -> String {
+        format!("{:04x}:{:04x}", self.vid, self.pid)
+    }
+}
+
+impl FromStr for UsbDevice {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut s = s.split(':');
+        
+        let (vid, pid) = match (s.next(), s.next()) {
+            (Some(vid), Some(pid)) => (vid, pid),
+            _ => return Err(()),
+        };
+
+        let vid = match u16::from_str_radix(vid, 16) {
+            Ok(v) => v,
+            Err(_) => return Err(()),
+        };
+
+        let pid = match u16::from_str_radix(pid, 16) {
+            Ok(v) => v,
+            Err(_) => return Err(()),
+        };
+
+        Ok(Self{vid, pid, name: None})
+    }
 }
 
 impl Default for Config {
@@ -217,6 +270,7 @@ impl AxisConfig {
     Eq,
     Debug,
     Display,
+    EnumString,
     EnumVariantNames,
     serde::Serialize,
     serde::Deserialize,

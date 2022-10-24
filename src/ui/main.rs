@@ -71,6 +71,7 @@ struct App {
 
     apply_state: button::State,
     revert_state: button::State,
+    write_state: button::State,
     attach_state: button::State,
     attached: bool,
 
@@ -116,6 +117,7 @@ impl Application for App {
 
                 apply_state: Default::default(),
                 revert_state: Default::default(),
+                write_state: Default::default(),
                 attach_state: Default::default(),
                 attached: true,
 
@@ -149,10 +151,13 @@ impl Application for App {
                 let _ = self.client.take();
             }
             (Message::ApplyConfig, Some(c)) => {
-                return Self::command(c, vmouse::Command::Config(self.config.clone()));
+                return Self::command(c, vmouse::Command::SetConfig(self.config.clone()));
             }
             (Message::RevertConfig, Some(c)) => {
                 return Self::command(c, vmouse::Command::GetConfig);
+            }
+            (Message::WriteConfig, Some(c)) => {
+                return Self::command(c, vmouse::Command::WriteConfig);
             }
             (Message::Attach, Some(c)) => {
                 self.attached = true;
@@ -209,7 +214,7 @@ impl Application for App {
                 self.socket = socket;
             }
 
-            (Message::Command(vmouse::Command::Config(c)), _) => {
+            (Message::Command(vmouse::Command::SetConfig(c)), _) => {
                 debug!("Received config: {:?}", c);
 
                 self.config = c;
@@ -330,6 +335,14 @@ impl Application for App {
                     Text::new("revert").horizontal_alignment(Horizontal::Center),
                 )
                 .on_press(Message::RevertConfig)
+                .width(Length::FillPortion(1)),
+            )
+            .push(
+                Button::new(
+                    &mut self.write_state,
+                    Text::new("write").horizontal_alignment(Horizontal::Center),
+                )
+                .on_press(Message::WriteConfig)
                 .width(Length::FillPortion(1)),
             );
         if !self.attached {

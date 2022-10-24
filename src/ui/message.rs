@@ -20,6 +20,7 @@ pub enum Message {
     Command(Command),
     ApplyConfig,
     RevertConfig,
+    WriteConfig,
     Attach,
     Detach,
 }
