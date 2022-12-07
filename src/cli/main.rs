@@ -47,6 +47,16 @@ async fn main() -> anyhow::Result<()> {
     // Await response
     let r = client.next().await;
 
+    match opts.command {
+        Command::Listen => {
+            loop {
+                let m = client.next().await;
+                info!("Received: {:?}", m);
+            }
+        },
+        _ => (),
+    }
+
     debug!("Received response: {:?}", r);
 
     Ok(())

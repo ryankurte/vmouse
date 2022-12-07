@@ -77,11 +77,11 @@ pub enum Command {
 
 /// Mouse re-mapping configuration
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     #[serde(default)]
     pub devices: HashMap<UsbDevice, axis::AxisCollection<AxisConfig>>,
 
-    #[serde(default)]
     pub default: axis::AxisCollection<AxisConfig>,
 }
 
@@ -142,34 +142,53 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             devices: HashMap::new(),
-            default: axis::AxisCollection{
-                x: AxisConfig {
-                    map: Map::H,
-                    scale: 0.005,
-                    curve: 0.5,
-                    deadzone: 0.0,
-                },
-                y: AxisConfig {
-                    map: Map::V,
-                    scale: 0.005,
-                    curve: 0.5,
-                    deadzone: 0.0,
-                },
-                z: Default::default(),
-                rx: AxisConfig {
-                    map: Map::Y,
-                    scale: 0.2,
-                    curve: 1.0,
-                    deadzone: 0.0,
-                },
-                ry: AxisConfig {
-                    map: Map::X,
-                    scale: -0.2,
-                    curve: 1.0,
-                    deadzone: 0.0,
-                },
-                rz: Default::default(),
-            }
+            default: Default::default(),
+        }
+    }
+}
+
+impl Default for axis::AxisCollection<AxisConfig> {
+    fn default() -> Self {
+        Self {
+            x: AxisConfig {
+                map: Map::H,
+                scale: 0.005,
+                curve: 0.5,
+                deadzone: 0.0,
+            },
+            y: AxisConfig {
+                map: Map::V,
+                scale: 0.005,
+                curve: 0.5,
+                deadzone: 0.0,
+            },
+            z: Default::default(),
+            rx: AxisConfig {
+                map: Map::Y,
+                scale: 0.2,
+                curve: 1.0,
+                deadzone: 0.0,
+            },
+            ry: AxisConfig {
+                map: Map::X,
+                scale: -0.2,
+                curve: 1.0,
+                deadzone: 0.0,
+            },
+            rz: Default::default(),
+        }
+    }
+}
+
+impl Default for axis::AxisCollection<f32> {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            rx: 0.0,
+            ry: 0.0,
+            rz: 0.0,
         }
     }
 }

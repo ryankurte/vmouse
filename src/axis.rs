@@ -115,18 +115,6 @@ impl<T> AxisCollection<T> {
     }
 }
 
-impl<T: Default> Default for AxisCollection<T> {
-    fn default() -> Self {
-        Self {
-            x: Default::default(),
-            y: Default::default(),
-            z: Default::default(),
-            rx: Default::default(),
-            ry: Default::default(),
-            rz: Default::default(),
-        }
-    }
-}
 
 impl<T> Index<Axis> for AxisCollection<T> {
     type Output = T;

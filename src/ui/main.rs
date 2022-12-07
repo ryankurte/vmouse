@@ -6,12 +6,18 @@ use std::{
 use futures::{stream::BoxStream, StreamExt};
 
 use iced::{
-    alignment::{self, Horizontal},
-    pick_list, slider, text_input, Alignment, Application, Canvas, Column, Command, Length, PickList, ProgressBar, Row, Settings, Slider, Text, TextInput,
+    alignment::{self, Horizontal, Alignment},
+    Application,
+    widget::Canvas,
+    Length,
+    Command,
+    Settings, Theme,
 };
 use iced_native::{
     subscription::Recipe,
-    widget::{button, Button},
+    widget::{
+        Button, Column, PickList, ProgressBar, Row, Slider, Text, TextInput,
+    },
 };
 
 use structopt::StructOpt;
@@ -20,7 +26,7 @@ use structopt::StructOpt;
 use log::{debug, error, info, LevelFilter};
 use simplelog::{Config as LogConfig, SimpleLogger};
 
-use vmouse::{Axis, AxisCollection, Client, Config, Map, AXIS, AXIS_LIN, AXIS_ROT, MAPPINGS};
+use vmouse::{Axis, AxisCollection, Client, Config, AXIS, AXIS_LIN, AXIS_ROT, MAPPINGS};
 
 mod cg;
 use cg::CurveGraph;
@@ -49,33 +55,18 @@ async fn main() -> anyhow::Result<()> {
 
 struct App {
     values: AxisCollection<f32>,
-
-    scale_state: text_input::State,
     scale_text: String,
-    apply_scale_state: button::State,
-
-    curve_slider: AxisCollection<slider::State>,
-    deadzone_slider: AxisCollection<slider::State>,
 
     cgs: AxisCollection<Arc<CurveGraph>>,
 
     config: Config,
 
-    pick_axis: pick_list::State<Axis>,
     axis: Axis,
 
-    pick_map: pick_list::State<Map>,
 
-    socket_state: text_input::State,
     socket: String,
 
-    apply_state: button::State,
-    revert_state: button::State,
-    write_state: button::State,
-    attach_state: button::State,
     attached: bool,
-
-    connect_state: button::State,
 
     client: Option<Client>,
 }
@@ -83,6 +74,7 @@ struct App {
 impl Application for App {
     type Executor = iced::executor::Default;
     type Message = Message;
+    type Theme = Theme;
     type Flags = ();
 
     fn new(_flags: Self::Flags) -> (Self, iced::Command<Self::Message>) {
@@ -95,12 +87,7 @@ impl Application for App {
             Self {
                 values: AxisCollection::with_axis(|_| Default::default()),
 
-                scale_state: Default::default(),
-                apply_scale_state: Default::default(),
                 scale_text: Default::default(),
-
-                curve_slider: AxisCollection::with_axis(|_| Default::default()),
-                deadzone_slider: AxisCollection::with_axis(|_| Default::default()),
 
                 config: Config::default(),
 
@@ -109,19 +96,11 @@ impl Application for App {
                 }),
 
                 axis: Axis::X,
-                pick_axis: Default::default(),
-                pick_map: Default::default(),
 
-                socket_state: Default::default(),
                 socket: socket.clone(),
 
-                apply_state: Default::default(),
-                revert_state: Default::default(),
-                write_state: Default::default(),
-                attach_state: Default::default(),
                 attached: true,
 
-                connect_state: Default::default(),
                 client: None,
             },
             iced::Command::batch(vec![Self::connect(socket)]),
@@ -252,7 +231,7 @@ impl Application for App {
         }
     }
 
-    fn view(&mut self) -> iced::Element<'_, Self::Message> {
+    fn view(&self) -> iced::Element<'_, Self::Message> {
         let mut column_lin = Column::new()
             .padding(5)
             .height(Length::Fill)
@@ -291,17 +270,15 @@ impl Application for App {
 
         let mut connect_ctl = Row::new().spacing(10).align_items(Alignment::Center).push(
             TextInput::new(
-                &mut self.socket_state,
                 "socket",
                 &self.socket,
-                Message::SocketChanged,
+                |v| Message::SocketChanged(v),
             )
             .width(Length::FillPortion(2)),
         );
         if self.client.is_none() {
             connect_ctl = connect_ctl.push(
                 Button::new(
-                    &mut self.connect_state,
                     Text::new("connect").horizontal_alignment(Horizontal::Center),
                 )
                 .on_press(Message::Connect)
@@ -310,7 +287,6 @@ impl Application for App {
         } else {
             connect_ctl = connect_ctl.push(
                 Button::new(
-                    &mut self.connect_state,
                     Text::new("disconnect").horizontal_alignment(Horizontal::Center),
                 )
                 .on_press(Message::Disconnect)
@@ -323,7 +299,6 @@ impl Application for App {
             .align_items(Alignment::Center)
             .push(
                 Button::new(
-                    &mut self.apply_state,
                     Text::new("apply").horizontal_alignment(Horizontal::Center),
                 )
                 .on_press(Message::ApplyConfig)
@@ -331,7 +306,6 @@ impl Application for App {
             )
             .push(
                 Button::new(
-                    &mut self.revert_state,
                     Text::new("revert").horizontal_alignment(Horizontal::Center),
                 )
                 .on_press(Message::RevertConfig)
@@ -339,7 +313,6 @@ impl Application for App {
             )
             .push(
                 Button::new(
-                    &mut self.write_state,
                     Text::new("write").horizontal_alignment(Horizontal::Center),
                 )
                 .on_press(Message::WriteConfig)
@@ -348,7 +321,6 @@ impl Application for App {
         if !self.attached {
             config_ctl = config_ctl.push(
                 Button::new(
-                    &mut self.attach_state,
                     Text::new("attach").horizontal_alignment(Horizontal::Center),
                 )
                 .on_press(Message::Attach)
@@ -357,7 +329,6 @@ impl Application for App {
         } else {
             config_ctl = config_ctl.push(
                 Button::new(
-                    &mut self.attach_state,
                     Text::new("detach").horizontal_alignment(Horizontal::Center),
                 )
                 .on_press(Message::Detach)
@@ -374,7 +345,6 @@ impl Application for App {
             .push(Text::new("Axis:").vertical_alignment(alignment::Vertical::Center))
             .push(
                 PickList::new(
-                    &mut self.pick_axis,
                     AXIS,
                     Some(self.axis),
                     Message::SelectAxis,
@@ -389,7 +359,6 @@ impl Application for App {
             .push(Text::new("Mapping:").vertical_alignment(alignment::Vertical::Center))
             .push(
                 PickList::new(
-                    &mut self.pick_map,
                     MAPPINGS,
                     Some(self.config.default[self.axis].map),
                     Message::MappingChanged,
@@ -403,13 +372,12 @@ impl Application for App {
                     .spacing(10)
                     .align_items(Alignment::Center)
                     .push(TextInput::new(
-                        &mut self.scale_state,
                         "scale",
                         &self.scale_text,
                         move |s| Message::ScaleChanged(axis, s),
                     ))
                     .push(
-                        Button::new(&mut self.apply_scale_state, Text::new("apply"))
+                        Button::new(Text::new("apply"))
                             .on_press(Message::ApplyScale),
                     ),
             )
@@ -418,7 +386,6 @@ impl Application for App {
             .push(ProgressBar::new(0.0..=1.0, self.config.default[axis].curve))
             .push(
                 Slider::new(
-                    &mut self.curve_slider[axis],
                     0.0..=1.0,
                     self.config.default[axis].curve,
                     move |x| Message::CurveChanged(axis, x),
@@ -430,7 +397,6 @@ impl Application for App {
             .push(ProgressBar::new(0.0..=1.0, self.config.default[axis].deadzone))
             .push(
                 Slider::new(
-                    &mut self.deadzone_slider[axis],
                     0.0..=1.0,
                     self.config.default[axis].deadzone,
                     move |d| Message::DeadzoneChanged(axis, d),

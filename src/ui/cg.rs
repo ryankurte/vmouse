@@ -1,8 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use iced::canvas::{Cache, Cursor, Geometry, LineCap, Path, Program, Stroke, Text};
-use iced::{Color, Element, Length, Point, Rectangle, Size, Vector};
-use iced_native::{layout, renderer, Renderer, Widget};
+use iced::{
+    Color, Element, Length, Point, Rectangle, Size, Vector,
+    widget::canvas::{Cache, Cursor, Geometry, LineCap, Path, Program, Stroke, Text}, Theme,
+};
+use iced_native::{layout, renderer, Renderer, Widget, widget::Tree};
 
 use vmouse::{Axis, AxisConfig};
 
@@ -60,7 +62,9 @@ impl CurveGraph {
 const BOUNDS: f32 = 10.0;
 
 impl Program<Message> for Arc<CurveGraph> {
-    fn draw(&self, bounds: Rectangle, _cursor: Cursor) -> Vec<Geometry> {
+    type State = ();
+
+    fn draw(&self, _state: &Self::State, _theme: &Theme, bounds: Rectangle, _cursor: Cursor) -> Vec<Geometry> {
         let inner = self.i.lock().unwrap();
 
         let mut config = inner.config;
@@ -74,19 +78,18 @@ impl Program<Message> for Arc<CurveGraph> {
             let by = bounds.size().height / 2.0 - BOUNDS;
 
             // Setup stroke type
-            let mut thin_stroke = Stroke {
+            let thin_stroke = Stroke {
                 width: 2.0,
-                color: Color::BLACK,
                 line_cap: LineCap::Round,
                 ..Stroke::default()
-            };
+            }.with_color(Color::BLACK);
 
             // Bounding box
             let p = Path::rectangle(
                 Point::new(1.0, 1.0),
                 Size::new(b.width - 2.0, b.height - 2.0),
             );
-            f.stroke(&p, thin_stroke);
+            f.stroke(&p, thin_stroke.clone());
 
             // Title
             let t = Text {
@@ -100,20 +103,20 @@ impl Program<Message> for Arc<CurveGraph> {
 
             // Axes
 
-            thin_stroke.color = Color::from_rgb8(0xDC, 0xDC, 0xDC);
+            let thin_stroke = thin_stroke.with_color(Color::from_rgb8(0xDC, 0xDC, 0xDC));
             let p = Path::line(Point { x: bx, y: 0.0 }, Point { x: -bx, y: 0.0 });
             f.with_save(|f| {
                 f.translate(Vector::new(center.x, center.y));
-                f.stroke(&p, thin_stroke);
+                f.stroke(&p, thin_stroke.clone());
             });
 
             let p = Path::line(Point { x: 0.0, y: -by }, Point { x: 0.0, y: by });
             f.with_save(|f| {
                 f.translate(Vector::new(center.x, center.y));
-                f.stroke(&p, thin_stroke);
+                f.stroke(&p, thin_stroke.clone());
             });
 
-            thin_stroke.color = Color::BLACK;
+            let thin_stroke = thin_stroke.with_color(Color::BLACK);
 
             let p = Path::new(|b| {
                 let mut last = Point { x: -bx, y: -by };
@@ -138,7 +141,7 @@ impl Program<Message> for Arc<CurveGraph> {
 
             f.with_save(|f| {
                 f.translate(Vector::new(center.x, center.y));
-                f.stroke(&p, thin_stroke);
+                f.stroke(&p, thin_stroke.clone());
             });
 
             // Center marker
@@ -160,6 +163,7 @@ impl Program<Message> for Arc<CurveGraph> {
     }
 }
 
+
 impl<M, R> Widget<M, R> for CurveGraph
 where
     R: Renderer,
@@ -178,7 +182,9 @@ where
 
     fn draw(
         &self,
+        _state: &Tree,
         renderer: &mut R,
+        _theme: &R::Theme,
         _style: &renderer::Style,
         layout: iced_native::Layout<'_>,
         _cursor_position: iced::Point,
@@ -187,23 +193,12 @@ where
         renderer.fill_quad(
             renderer::Quad {
                 bounds: layout.bounds(),
-                border_radius: 1.0,
+                border_radius: 1.0.into(),
                 border_width: 1.0,
                 border_color: Color::BLACK,
             },
             Color::WHITE,
         )
-    }
-
-    fn hash_layout(&self, state: &mut iced_native::Hasher) {
-        use std::hash::Hash;
-
-        let i = self.i.lock().unwrap();
-
-        self.axis.hash(state);
-        i.value.to_bits().hash(state);
-        i.config.scale.to_bits().hash(state);
-        i.config.curve.to_bits().hash(state);
     }
 }
 

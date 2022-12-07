@@ -47,14 +47,11 @@ strum_macros = "0.23.0"
 strum = "0.23.0"
 
 #iced_glow = "0.2.0"
-iced_native = "0.4.0"
+#iced_native = "0.4.0"
+iced = { version = "0.6.0", features = [ "canvas", "wgpu", "async-std" ] }
+iced_wgpu = "*"
+iced_native = "*"
 
-[dependencies.iced]
-git = "https://github.com/iced-rs/iced"
-branch = "master"
-#version = "0.3"
-default_features = false
-features = [ "glow", "glow_canvas", "glow_default_system_font", "async-std" ]
 
 [[bin]]
 name = "vmoused"
@@ -69,6 +66,6 @@ name = "vmouseui"
 path = "src/ui/main.rs"
 
 [patch.crates-io]
-iced_native = { git = "https://github.com/iced-rs/iced", branch="master" }
-iced_glow = { git = "https://github.com/iced-rs/iced", branch="master" }
+#iced_native = { git = "https://github.com/iced-rs/iced", branch="master" }
+#iced_glow = { git = "https://github.com/iced-rs/iced", branch="master" }
 evdev-rs = { git = "https://github.com/ryankurte/evdev-rs.git", branch = "device-as-raw-fd" }
