@@ -21,10 +21,8 @@ use iced_native::{
 };
 
 use structopt::StructOpt;
-
-
 use log::{debug, error, info, LevelFilter};
-use simplelog::{Config as LogConfig, SimpleLogger};
+use simplelog::SimpleLogger;
 
 use vmouse::{Axis, AxisCollection, Client, Config, AXIS, AXIS_LIN, AXIS_ROT, MAPPINGS};
 
@@ -46,7 +44,11 @@ async fn main() -> anyhow::Result<()> {
     let opts = Options::from_args();
 
     // Setup logging
-    let _ = SimpleLogger::init(opts.log_level, LogConfig::default());
+    let log_config = simplelog::ConfigBuilder::new()
+	.add_filter_ignore_str("wgpu_core")
+	.build();
+
+    let _ = SimpleLogger::init(opts.log_level, log_config);
 
     App::run(Settings::default())?;
 
