@@ -45,8 +45,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Setup logging
     let log_config = simplelog::ConfigBuilder::new()
-	.add_filter_ignore_str("wgpu_core")
-	.build();
+        .add_filter_ignore_str("wgpu_core")
+        .add_filter_ignore_str("iced_wgpu")
+        .build();
 
     let _ = SimpleLogger::init(opts.log_level, log_config);
 
@@ -63,8 +64,8 @@ struct App {
 
     config: Config,
 
+    device: String,
     axis: Axis,
-
 
     socket: String,
 
@@ -97,6 +98,7 @@ impl Application for App {
                     Arc::new(CurveGraph::new(a, config.default[a], 0.0))
                 }),
 
+                device: "default".to_string(),
                 axis: Axis::X,
 
                 socket: socket.clone(),
@@ -165,31 +167,58 @@ impl Application for App {
                 if v > -10.0 && v < 10.0 {
                     info!("Applying scale {:0.4} for axis: {}", v, self.axis);
 
-                    self.config.default[self.axis].scale = v;
-                    self.cgs[self.axis].set_config(self.config.default[self.axis]);
+                    if let Some(config) = self.config.get_mut(&self.device) {
+                        config[self.axis].scale = v;
+                        self.cgs[self.axis].set_config(config[self.axis]);
+                    }
+                    
                 } else {
                     error!("Scale value: {:0.4} exceeds maximum range", v);
                 }
             }
             (Message::MappingChanged(m), _) => {
-                self.config.default[self.axis].map = m;
+                if let Some(config) = self.config.get_mut(&self.device) {
+                    config[self.axis].map = m;
+                }
             }
             (Message::CurveChanged(a, c), _) => {
-                self.config.default[a].curve = c;
-                self.cgs[a].set_config(self.config.default[a]);
+                if let Some(config) = self.config.get_mut(&self.device) {
+                    config[a].curve = c;
+                    self.cgs[a].set_config(config[a]);
+                }
             }
             (Message::DeadzoneChanged(a, d), _) => {
-                self.config.default[a].deadzone = d;
-                self.cgs[a].set_config(self.config.default[a]);
+                if let Some(config) = self.config.get_mut(&self.device) {
+                    config[a].deadzone = d;
+                    self.cgs[a].set_config(config[a]);
+                }
             }
             (Message::ValueChanged(a, v), _) => {
                 self.values[a] = v;
                 self.cgs[a].set_value(v);
             }
+            (Message::SelectDevice(d), _) => {
+                self.device = d;
+
+                let config = self.config.get(&self.device).unwrap_or(&self.config.default);
+                // Update curve graphs
+                for a in AXIS {
+                    self.cgs[*a].set_config(config[*a]);
+                }
+            }
             (Message::SelectAxis(a), _) => {
+                // Clear previous axis selected state
+                self.cgs[self.axis].set_selected(false);
+
+                // Update axis
                 self.axis = a;
 
-                self.scale_text = format!("{:0.4}", self.config.default[a].scale);
+                // Set new axis selected state
+                self.cgs[self.axis].set_selected(true);
+
+                // Update scale text for new axis
+                let config = self.config.get(&self.device).unwrap_or(&self.config.default);
+                self.scale_text = format!("{:0.4}", config[a].scale);
             }
             (Message::SocketChanged(socket), _) => {
                 self.socket = socket;
@@ -200,10 +229,14 @@ impl Application for App {
 
                 self.config = c;
 
+                let config = self.config.get(&self.device).unwrap_or(&self.config.default);
+
                 // Update curve graphs
                 for a in AXIS {
-                    self.cgs[*a].set_config(self.config.default[*a]);
+                    self.cgs[*a].set_config(config[*a]);
                 }
+
+                self.cgs[self.axis].set_selected(true);
 
                 self.scale_text = format!("{:0.4}", self.config.default[self.axis].scale);
             }
@@ -239,7 +272,8 @@ impl Application for App {
             .height(Length::Fill)
             .width(Length::FillPortion(2));
         for a in AXIS_LIN {
-            let g = Canvas::new(self.cgs[*a].clone())
+            let cg = self.cgs[*a].clone();
+            let g = Canvas::new(cg)
                 .width(Length::FillPortion(2))
                 .height(Length::FillPortion(2));
 
@@ -256,7 +290,8 @@ impl Application for App {
             .height(Length::Fill)
             .width(Length::FillPortion(2));
         for a in AXIS_ROT {
-            let g = Canvas::new(self.cgs[*a].clone())
+            let cg = self.cgs[*a].clone();
+            let g = Canvas::new(cg)
                 .width(Length::FillPortion(2))
                 .height(Length::FillPortion(2));
 
@@ -343,6 +378,16 @@ impl Application for App {
             .spacing(10)
             .height(Length::Fill)
             .width(Length::FillPortion(2))
+            // Device selection
+            .push(Text::new("Device:").vertical_alignment(alignment::Vertical::Center))
+            .push(
+                PickList::new(
+                    self.config.iter().map(|(n, _c)| n ).collect::<Vec<_>>(),
+                    Some(self.device.clone()),
+                    Message::SelectDevice,
+                )
+                .width(Length::Fill),
+            )
             // Axis selection
             .push(Text::new("Axis:").vertical_alignment(alignment::Vertical::Center))
             .push(
@@ -362,7 +407,7 @@ impl Application for App {
             .push(
                 PickList::new(
                     MAPPINGS,
-                    Some(self.config.default[self.axis].map),
+                    self.config.get(&self.device).map(|c| c[self.axis].map ),
                     Message::MappingChanged,
                 )
                 .width(Length::Fill),
@@ -385,22 +430,20 @@ impl Application for App {
             )
             // Curve configuration
             .push(Text::new("Curve:").vertical_alignment(alignment::Vertical::Center))
-            .push(ProgressBar::new(0.0..=1.0, self.config.default[axis].curve))
             .push(
                 Slider::new(
                     0.0..=1.0,
-                    self.config.default[axis].curve,
+                    self.config.get(&self.device).map(|c| c[self.axis].curve ).unwrap_or_default(),
                     move |x| Message::CurveChanged(axis, x),
                 )
                 .step(0.01),
             )
             // Deadzone configuration
             .push(Text::new("Deadzone:").vertical_alignment(alignment::Vertical::Center))
-            .push(ProgressBar::new(0.0..=1.0, self.config.default[axis].deadzone))
             .push(
                 Slider::new(
                     0.0..=1.0,
-                    self.config.default[axis].deadzone,
+                    self.config.get(&self.device).map(|c| c[self.axis].deadzone ).unwrap_or_default(),
                     move |d| Message::DeadzoneChanged(axis, d),
                 )
                 .step(0.01),

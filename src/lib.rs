@@ -85,6 +85,55 @@ pub struct Config {
     pub default: axis::AxisCollection<AxisConfig>,
 }
 
+impl Config {
+    /// Fetch device config by name (`default` or `pid:vid`)
+    pub fn get(&self, name: &str) -> Option<&axis::AxisCollection<AxisConfig>> {
+        match name {
+            "default" => Some(&self.default),
+            _ => self.devices.iter().find(|(n, _v)| n.to_string() == name ).map(|(_n, v)| v ),
+        }
+    }
+
+    /// Fetch device config by name (`default` or `pid:vid`)
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut axis::AxisCollection<AxisConfig>> {
+        match name {
+            "default" => Some(&mut self.default),
+            _ => self.devices.iter_mut().find(|(n, _v)| n.to_string() == name ).map(|(_n, v)| v ),
+        }
+    }
+
+    /// Iterate through configurations
+    pub fn iter<'a>(&'a self) -> ConfigIter<'a> {
+        ConfigIter {
+            config: self,
+            index: 0,
+        }
+    }
+}
+
+pub struct ConfigIter<'a> {
+    config: &'a Config,
+    index: usize,
+}
+
+impl <'a> Iterator for ConfigIter<'a> {
+    type Item = (String, &'a axis::AxisCollection<AxisConfig>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.index;
+        self.index += 1;
+
+        // First return default config
+        if index == 0 {
+            return Some(("default".to_string(), &self.config.default));
+        }
+
+        // Then any specific devices
+        self.config.devices.iter().nth(index - 1)
+            .map(|(k, v)| (k.to_string(), v))
+    }
+}
+
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct ConfigFile {
     pub devices: Vec<DeviceConfig>,

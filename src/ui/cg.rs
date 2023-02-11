@@ -22,6 +22,7 @@ struct CurveGraphInner {
     config: AxisConfig,
     value: f32,
     cache: Cache,
+    selected: bool,
 }
 
 const N: isize = 100;
@@ -34,6 +35,7 @@ impl CurveGraph {
                 config,
                 value,
                 cache: Cache::new(),
+                selected: false,
             })),
         }
     }
@@ -56,6 +58,12 @@ impl CurveGraph {
             i.cache.clear();
         }
         i.value = v;
+    }
+
+    pub fn set_selected(&self, selected: bool) {
+        let mut i = self.i.lock().unwrap();
+        i.selected = selected;
+        i.cache.clear();
     }
 }
 
@@ -89,7 +97,10 @@ impl Program<Message> for Arc<CurveGraph> {
                 Point::new(1.0, 1.0),
                 Size::new(b.width - 2.0, b.height - 2.0),
             );
-            f.stroke(&p, thin_stroke.clone());
+            match inner.selected {
+                true => f.stroke(&p, thin_stroke.clone().with_color(Color::from_rgb8(0x00, 0x00, 0xFF))),
+                false => f.stroke(&p, thin_stroke.clone()),
+            };
 
             // Title
             let t = Text {
@@ -162,7 +173,6 @@ impl Program<Message> for Arc<CurveGraph> {
         vec![g]
     }
 }
-
 
 impl<M, R> Widget<M, R> for CurveGraph
 where

@@ -11,6 +11,7 @@ pub enum Message {
     DeadzoneChanged(Axis, f32),
     ValueChanged(Axis, f32),
     MappingChanged(Map),
+    SelectDevice(String),
     SelectAxis(Axis),
     Tick,
     SocketChanged(String),
