@@ -43,8 +43,7 @@ smol = { version = "1.2.5", optional = false }
 ctrlc = "3.2.1"
 async-ctrlc = "1.2.0"
 crossbeam = "0.8.1"
-strum_macros = "0.23.0"
-strum = "0.23.0"
+strum = { version = "0.24.0", features = [ "derive" ] }
 
 #iced_glow = "0.2.0"
 #iced_native = "0.4.0"

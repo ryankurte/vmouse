@@ -6,7 +6,7 @@ use evdev_rs::{
 };
 use serde::{Deserialize, Serialize};
 use structopt::StructOpt;
-use strum_macros::{Display, EnumString, EnumVariantNames};
+use strum::{Display, EnumString, EnumVariantNames};
 
 use crate::AXIS_MAX;
 
