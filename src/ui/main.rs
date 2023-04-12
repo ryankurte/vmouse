@@ -401,7 +401,7 @@ impl Application for App {
             // Current value display
             .push(Text::new("Value:").vertical_alignment(alignment::Vertical::Center))
             .push(ProgressBar::new(-1.0..=1.0, self.values[axis]))
-            .push(Row::new().height(Length::Units(10)))
+            .push(Row::new().height(Length::Fixed(10.0)))
             // Mapping configuration
             .push(Text::new("Mapping:").vertical_alignment(alignment::Vertical::Center))
             .push(
